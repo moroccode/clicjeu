@@ -11,15 +11,16 @@
 
 import { supabase } from './supabase';
 
-// --- Vocabulaire pour générer des codes rigolos ---
-const COLORS  = ['ROUGE','BLEU','VERT','JAUNE','ROSE','VIOLET','ORANGE','BLANC','NOIR'];
-const ANIMALS = ['CHAT','CHIEN','LION','OURS','RENARD','PANDA','TIGRE','LAPIN','SINGE','LOUP','HIBOU','POULPE'];
+// --- Charset sans ambiguïté (pas de 0/O, pas de I/1) ---
+const CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
-// Génère un code aléatoire type "BLEU-CHAT"
+// Génère un code court (6 caractères) type "K7M2X9"
 function generateCode() {
-  const c = COLORS[Math.floor(Math.random() * COLORS.length)];
-  const a = ANIMALS[Math.floor(Math.random() * ANIMALS.length)];
-  return `${c}-${a}`;
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += CHARSET[Math.floor(Math.random() * CHARSET.length)];
+  }
+  return code;
 }
 
 // ============================================================
