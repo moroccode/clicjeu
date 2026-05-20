@@ -1,251 +1,192 @@
 // ============================================================
-// src/rooms.js — Gestion des salons (parties online)
+// src/friends.js — Système d'amis (modèle 1 ligne par relation)
 // ============================================================
-// Tout ce qui touche aux parties online est ici :
-//   • createRoom() — créer une partie et obtenir un code
-//   • joinRoom()   — rejoindre une partie avec un code
-//   • subscribeToRoom() — écouter les changements en temps réel
-//   • updateRoomState() — jouer un coup (modifier l'état)
-//   • leaveRoom() — quitter / quitter
+// Structure :
+//   1 ligne = 1 demande ou 1 amitié
+//   user_id    = celui qui a envoyé la demande
+//   friend_id  = destinataire
+//   status     = 'pending' | 'accepted'
+//
+// Les 2 peuvent lire, modifier, supprimer leur relation (RLS symétrique)
 // ============================================================
 
 import { supabase } from './supabase';
 
-// --- Vocabulaire pour générer des codes rigolos ---
-const COLORS  = ['ROUGE','BLEU','VERT','JAUNE','ROSE','VIOLET','ORANGE','BLANC','NOIR'];
-const ANIMALS = ['CHAT','CHIEN','LION','OURS','RENARD','PANDA','TIGRE','LAPIN','SINGE','LOUP','HIBOU','POULPE'];
-
-// Génère un code aléatoire type "BLEU-CHAT"
-function generateCode() {
-  const c = COLORS[Math.floor(Math.random() * COLORS.length)];
-  const a = ANIMALS[Math.floor(Math.random() * ANIMALS.length)];
-  return `${c}-${a}`;
-}
-
 // ============================================================
-// createRoom — Crée une nouvelle partie
-// gameId : 'morpion' | 'connect4' | 'memory' | 'bataille' | 'pendu'
+// searchUsers — Cherche par pseudo (partial, insensible casse)
 // ============================================================
-// createRoom — Crée une nouvelle partie
-// gameId : 'morpion' | 'connect4' | 'memory' | 'bataille' | 'pendu' | 'echecs'
-// initialState : état de départ du jeu (ex: { board: [...] })
-// invitedId : (optionnel) id de l'ami qu'on invite spécifiquement
-// ============================================================
-export async function createRoom({ gameId, initialState, invitedId = null }) {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: 'Tu dois être connecté.' };
-
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const code = generateCode();
-
-    const insertData = {
-      code,
-      game: gameId,
-      player1_id: user.id,
-      state: initialState,
-      status: 'waiting',
-    };
-    // Si on invite un ami précis, on l'ajoute dans la room
-    if (invitedId) insertData.invited_id = invitedId;
-
-    const { data, error } = await supabase
-      .from('rooms')
-      .insert(insertData)
-      .select()
-      .single();
-
-    if (!error) return { ok: true, room: data };
-    if (error.code !== '23505') {
-      return { ok: false, error: 'Erreur création : ' + error.message };
-    }
-  }
-
-  return { ok: false, error: 'Trop de tentatives. Réessaie.' };
-}
-
-// ============================================================
-// listIncomingInvitations — Lister les invitations qu'on a reçues
-// (rooms où je suis invited_id et status='waiting')
-// ============================================================
-export async function listIncomingInvitations() {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return [];
-
-  const { data, error } = await supabase
-    .from('rooms')
-    .select('id, code, game, player1_id, created_at')
-    .eq('invited_id', user.id)
-    .eq('status', 'waiting')
-    .order('created_at', { ascending: false });
-
-  if (error) return [];
-  return data || [];
-}
-
-// ============================================================
-// subscribeToInvitations — Écouter en temps réel les nouvelles invitations
-// callback est appelé quand une nouvelle invitation arrive
-// ============================================================
-export function subscribeToInvitations(userId, callback) {
-  const channel = supabase
-    .channel(`invites-${userId}`)
-    .on('postgres_changes',
-      { event: 'INSERT', schema: 'public', table: 'rooms', filter: `invited_id=eq.${userId}` },
-      (payload) => callback(payload.new)
-    )
-    .subscribe();
-
-  return {
-    unsubscribe: () => supabase.removeChannel(channel),
-  };
-}
-
-// ============================================================
-// cancelInvitation — Annuler une invitation envoyée (= supprimer le salon)
-// ============================================================
-export async function cancelInvitation(roomId) {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { ok: false };
-
-  const { error } = await supabase
-    .from('rooms')
-    .delete()
-    .eq('id', roomId)
-    .eq('player1_id', user.id)  // seul le créateur peut annuler
-    .eq('status', 'waiting');   // et seulement si encore en attente
-
-  return { ok: !error };
-}
-
-// ============================================================
-// joinRoom — Rejoindre une partie avec un code
-// ============================================================
-export async function joinRoom({ code }) {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: 'Tu dois être connecté.' };
-
-  const cleanCode = code.trim().toUpperCase();
-
-  // Cherche le salon par son code
-  const { data: room, error: findErr } = await supabase
-    .from('rooms')
-    .select('*')
-    .eq('code', cleanCode)
-    .maybeSingle();
-
-  if (findErr || !room) return { ok: false, error: 'Code introuvable 🤔' };
-  if (room.status === 'finished') return { ok: false, error: 'Cette partie est terminée.' };
-  if (room.player1_id === user.id) return { ok: false, error: 'C\'est ta propre partie !' };
-  if (room.player2_id && room.player2_id !== user.id) {
-    return { ok: false, error: 'Cette partie est déjà pleine 😢' };
-  }
-
-  // Rejoindre = devenir player2 + passer en "playing"
-  const { data: updated, error: updateErr } = await supabase
-    .from('rooms')
-    .update({
-      player2_id: user.id,
-      status: 'playing',
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', room.id)
-    .select()
-    .single();
-
-  if (updateErr) return { ok: false, error: 'Erreur : ' + updateErr.message };
-  return { ok: true, room: updated };
-}
-
-// ============================================================
-// getRoom — Charger un salon par son ID (pour rafraîchir)
-// ============================================================
-export async function getRoom(roomId) {
-  const { data, error } = await supabase
-    .from('rooms')
-    .select('*')
-    .eq('id', roomId)
-    .single();
-
-  if (error) return null;
-  return data;
-}
-
-// ============================================================
-// updateRoomState — Mettre à jour l'état du jeu (jouer un coup)
-// patch : objet partiel à merger, ex: { state: {...}, winner: 1 }
-// ============================================================
-export async function updateRoomState(roomId, patch) {
-  const { error } = await supabase
-    .from('rooms')
-    .update({ ...patch, updated_at: new Date().toISOString() })
-    .eq('id', roomId);
-
-  return { ok: !error, error: error?.message };
-}
-
-// ============================================================
-// subscribeToRoom — S'abonner aux changements en temps réel
-// callback : appelée à chaque changement avec le nouveau room
-// Retourne un objet avec .unsubscribe() pour arrêter d'écouter
-// ============================================================
-export function subscribeToRoom(roomId, callback) {
-  const channel = supabase
-    .channel(`room-${roomId}`)
-    .on('postgres_changes',
-      { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` },
-      (payload) => callback(payload.new)
-    )
-    .subscribe();
-
-  return {
-    unsubscribe: () => supabase.removeChannel(channel),
-  };
-}
-
-// ============================================================
-// getProfilesByIds — Récupérer plusieurs profils en une fois
-// Utile pour afficher les pseudos des 2 joueurs
-// ============================================================
-export async function getProfilesByIds(ids) {
-  const validIds = ids.filter(Boolean);
-  if (validIds.length === 0) return {};
-
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('id, pseudo, avatar')
-    .in('id', validIds);
-
-  if (error) return {};
-  // Transforme en { id1: profile1, id2: profile2 }
-  const map = {};
-  data.forEach((p) => { map[p.id] = p; });
-  return map;
-}
-
-// ============================================================
-// updateRoomInvite — Invite un ami spécifique sur une room existante
-// ============================================================
-export async function updateRoomInvite(roomId, invitedId) {
-  const { error } = await supabase
-    .from('rooms')
-    .update({ invited_id: invitedId, updated_at: new Date().toISOString() })
-    .eq('id', roomId);
-  return { ok: !error, error: error?.message };
-}
-
-// ============================================================
-// listMyRooms — Toutes mes rooms ouvertes (waiting ou playing)
-// ============================================================
-export async function listMyRooms() {
+export async function searchUsers(query) {
+  const clean = query.trim();
+  if (clean.length < 2) return [];
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return [];
 
   const { data } = await supabase
-    .from('rooms')
-    .select('*')
-    .or(`player1_id.eq.${user.id},player2_id.eq.${user.id}`)
-    .in('status', ['waiting', 'playing'])
-    .order('created_at', { ascending: false });
+    .from('profiles')
+    .select('id, pseudo, avatar')
+    .ilike('pseudo', `%${clean}%`)
+    .neq('id', user.id)
+    .limit(10);
 
   return data || [];
+}
+
+// ============================================================
+// sendFriendRequest — Envoyer une demande d'ami
+// ============================================================
+export async function sendFriendRequest(friendId) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Tu dois être connecté.' };
+
+  // Vérif si relation déjà existante (dans un sens ou l'autre)
+  const { data: existing } = await supabase
+    .from('friendships')
+    .select('status')
+    .or(`and(user_id.eq.${user.id},friend_id.eq.${friendId}),and(user_id.eq.${friendId},friend_id.eq.${user.id})`)
+    .maybeSingle();
+
+  if (existing) {
+    if (existing.status === 'accepted') return { ok: false, error: 'Vous êtes déjà amis 💚' };
+    return { ok: false, error: 'Demande déjà envoyée ⏳' };
+  }
+
+  const { error } = await supabase.from('friendships').insert({
+    user_id: user.id,
+    friend_id: friendId,
+    requested_by: user.id,
+    status: 'pending',
+  });
+
+  if (error) return { ok: false, error: 'Erreur : ' + error.message };
+  return { ok: true };
+}
+
+// ============================================================
+// acceptFriendRequest — Accepter une demande reçue
+// Met à jour la ligne existante (user_id=eux, friend_id=moi) en 'accepted'
+// ============================================================
+export async function acceptFriendRequest(senderId) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false };
+
+  // La ligne existe avec user_id=senderId, friend_id=moi
+  const { error } = await supabase
+    .from('friendships')
+    .update({ status: 'accepted', updated_at: new Date().toISOString() })
+    .eq('user_id', senderId)
+    .eq('friend_id', user.id)
+    .eq('status', 'pending');
+
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
+// ============================================================
+// rejectFriendRequest — Refuser / annuler une demande
+// ============================================================
+export async function rejectFriendRequest(senderId) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false };
+
+  await supabase.from('friendships')
+    .delete()
+    .or(`and(user_id.eq.${senderId},friend_id.eq.${user.id}),and(user_id.eq.${user.id},friend_id.eq.${senderId})`);
+
+  return { ok: true };
+}
+
+// ============================================================
+// removeFriend — Supprimer un ami
+// ============================================================
+export async function removeFriend(friendId) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false };
+
+  await supabase.from('friendships')
+    .delete()
+    .or(`and(user_id.eq.${user.id},friend_id.eq.${friendId}),and(user_id.eq.${friendId},friend_id.eq.${user.id})`);
+
+  return { ok: true };
+}
+
+// ============================================================
+// listFriends — Mes amis acceptés (dans les 2 sens)
+// ============================================================
+export async function listFriends() {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return [];
+
+  // Lignes acceptées où je suis user_id OU friend_id
+  const { data: rows } = await supabase
+    .from('friendships')
+    .select('user_id, friend_id')
+    .eq('status', 'accepted')
+    .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`);
+
+  if (!rows || rows.length === 0) return [];
+
+  // L'ami c'est "l'autre" (pas moi)
+  const friendIds = rows.map((r) => r.user_id === user.id ? r.friend_id : r.user_id);
+  const { data: profiles } = await supabase
+    .from('profiles')
+    .select('id, pseudo, avatar')
+    .in('id', friendIds);
+
+  return profiles || [];
+}
+
+// ============================================================
+// listPendingRequests — Demandes reçues (friend_id = moi, pending)
+// ============================================================
+export async function listPendingRequests() {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return [];
+
+  const { data: rows } = await supabase
+    .from('friendships')
+    .select('user_id')
+    .eq('friend_id', user.id)
+    .eq('status', 'pending');
+
+  if (!rows || rows.length === 0) return [];
+
+  const ids = rows.map((r) => r.user_id);
+  const { data: profiles } = await supabase
+    .from('profiles')
+    .select('id, pseudo, avatar')
+    .in('id', ids);
+
+  return profiles || [];
+}
+
+// ============================================================
+// listSentRequests — Demandes envoyées (user_id = moi, pending)
+// ============================================================
+export async function listSentRequests() {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return [];
+
+  const { data: rows } = await supabase
+    .from('friendships')
+    .select('friend_id')
+    .eq('user_id', user.id)
+    .eq('status', 'pending');
+
+  if (!rows || rows.length === 0) return [];
+
+  const ids = rows.map((r) => r.friend_id);
+  const { data: profiles } = await supabase
+    .from('profiles')
+    .select('id, pseudo, avatar')
+    .in('id', ids);
+
+  return profiles || [];
+}
+
+// ============================================================
+// syncFriendships — Plus nécessaire avec le modèle 1 ligne
+// Conservé pour compatibilité (appel dans App.jsx au login)
+// ============================================================
+export async function syncFriendships() {
+  // no-op dans le nouveau modèle
 }
