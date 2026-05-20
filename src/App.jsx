@@ -8,6 +8,8 @@ import { searchUsers, sendFriendRequest, acceptFriendRequest, rejectFriendReques
          removeFriend, listFriends, listPendingRequests, listSentRequests, syncFriendships } from './friends';
 import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
+import { tap, playSound, vibrate, launchConfetti,
+         isSoundOn, setSoundOn, isVibrationOn, setVibrationOn } from './effects';
 
 // ============================================================
 // CLICJEU v6 — Auth pseudo + PIN BRANCHÉE SUR SUPABASE
@@ -691,6 +693,8 @@ function GameHub({ profile, onLogout }) {
     listPendingRequests().then((list) => { if (mounted) setPendingFriendRequests(list.length); });
 
     const invSub = subscribeToInvitations(profile.id, () => {
+      playSound('notify');
+      vibrate([60, 40, 60]);
       listIncomingInvitations().then((list) => { if (mounted) setIncomingInvites(list); });
     });
 
@@ -1345,12 +1349,25 @@ function SearchResultRow({ user, onSent }) {
 // --- Barre de profil (avatar + pseudo + menu déconnexion) ---
 function ProfileBar({ profile, onLogout, onOpenFriends, pendingFriends = 0 }) {
   const [open, setOpen] = useState(false);
+  const [soundOn, setSnd] = useState(isSoundOn());
+  const [vibOn, setVib]   = useState(isVibrationOn());
+
+  const toggleSound = () => {
+    const v = !soundOn;
+    setSnd(v); setSoundOn(v);
+    if (v) playSound('pop');
+  };
+  const toggleVib = () => {
+    const v = !vibOn;
+    setVib(v); setVibrationOn(v);
+    if (v) vibrate(40);
+  };
 
   return (
     <div className="flex items-center justify-between mb-6">
-      {/* Avatar + pseudo → dropdown déconnexion */}
+      {/* Avatar + pseudo → dropdown */}
       <div className="relative">
-        <button onClick={() => setOpen(!open)}
+        <button onClick={() => { tap(); setOpen(!open); }}
           className="flex items-center gap-2 px-3 py-2 rounded-full"
           style={{ background: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
           <span className="text-2xl">{profile.avatar}</span>
@@ -1360,9 +1377,28 @@ function ProfileBar({ profile, onLogout, onOpenFriends, pendingFriends = 0 }) {
 
         {open && (
           <div className="absolute left-0 top-full mt-2 rounded-2xl p-2 z-20" style={{
-            background: C.white, minWidth: 180,
+            background: C.white, minWidth: 200,
             boxShadow: '0 6px 16px rgba(0,0,0,0.12)',
           }}>
+            {/* Toggle son */}
+            <button onClick={toggleSound}
+              className="w-full text-left px-3 py-2 rounded-xl text-sm clic-press flex items-center justify-between"
+              style={{ color: C.ink, fontWeight: 700 }}>
+              <span>{soundOn ? '🔊 Son' : '🔇 Son coupé'}</span>
+              <span className="text-xs" style={{ color: soundOn ? C.accentPink : C.inkSoft }}>
+                {soundOn ? 'ON' : 'OFF'}
+              </span>
+            </button>
+            {/* Toggle vibration */}
+            <button onClick={toggleVib}
+              className="w-full text-left px-3 py-2 rounded-xl text-sm clic-press flex items-center justify-between"
+              style={{ color: C.ink, fontWeight: 700 }}>
+              <span>{vibOn ? '📳 Vibration' : '🚫 Vibration'}</span>
+              <span className="text-xs" style={{ color: vibOn ? C.accentPink : C.inkSoft }}>
+                {vibOn ? 'ON' : 'OFF'}
+              </span>
+            </button>
+            <div style={{ height: 1, background: C.cream, margin: '4px 0' }}></div>
             <button onClick={() => { setOpen(false); onLogout(); }}
               className="w-full text-left px-3 py-2 rounded-xl text-sm clic-press"
               style={{ color: C.accentPink, fontWeight: 700 }}>
@@ -1374,7 +1410,7 @@ function ProfileBar({ profile, onLogout, onOpenFriends, pendingFriends = 0 }) {
 
       {/* Bouton amis — toujours visible */}
       {onOpenFriends && (
-        <button onClick={onOpenFriends}
+        <button onClick={() => { tap(); onOpenFriends(); }}
           className="relative flex items-center gap-2 px-4 py-2 rounded-full clic-press"
           style={{ background: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
           <span style={{ color: C.ink, fontWeight: 700 }}>👥</span>
@@ -1516,7 +1552,7 @@ function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends,
         {ids.map((id) => {
           const g = GAMES[id];
           return (
-            <button key={id} onClick={() => onPickGame(id)}
+            <button key={id} onClick={() => { tap(); onPickGame(id); }}
               className="rounded-3xl p-5 text-left transition-all clic-press relative overflow-hidden"
               style={{
                 background: g.bg,
@@ -1587,7 +1623,7 @@ function ModeSelector({ profile, gameId, onBack, onPickMode }) {
       </p>
 
       {/* En ligne en premier (plus mis en avant) */}
-      <button onClick={() => onPickMode('online')}
+      <button onClick={() => { tap(); onPickMode('online'); }}
         className="w-full p-5 rounded-3xl mb-3 text-left clic-press"
         style={{
           background: C.lavender,
@@ -1608,7 +1644,7 @@ function ModeSelector({ profile, gameId, onBack, onPickMode }) {
       </button>
 
       {/* Mode local (désactivé si jeu onlineOnly) */}
-      <button onClick={() => !onlineOnly && onPickMode('local')}
+      <button onClick={() => { if (onlineOnly) return; tap(); onPickMode('local'); }}
         disabled={onlineOnly}
         className="w-full p-5 rounded-3xl text-left clic-press"
         style={{
@@ -2109,6 +2145,8 @@ function InviteToPlayScreen({ profile, gameId, onBack, onInviteFriend }) {
   };
 
   const handleInvite = async (friend) => {
+    playSound('notify');
+    vibrate(40);
     setInviting(friend.id);
     await onInviteFriend(friend);
     // (le parent va naviguer ailleurs si ça réussit)
@@ -2489,8 +2527,12 @@ function Banner({ text, color = C.accentPink }) {
 }
 
 function KawaiiButton({ children, onClick, color = C.accentPink, fullWidth = false }) {
+  const handleClick = (e) => {
+    tap();
+    if (onClick) onClick(e);
+  };
   return (
-    <button onClick={onClick}
+    <button onClick={handleClick}
       className={`px-5 py-3 rounded-2xl clic-press ${fullWidth ? 'w-full' : ''}`}
       style={{
         background: color, color: C.white,
@@ -2507,6 +2549,33 @@ function GameShell({ gameId, onBack, onReset, children }) {
       {children}
     </div>
   );
+}
+
+// ============================================================
+// HOOK : Effets de fin de partie (son + confettis + vibration)
+// À appeler dans chaque jeu online avec :
+//   winner : null | 'draw' | identifiant du gagnant
+//   didIWin : booléen (suis-je le gagnant ?)
+// ============================================================
+function useGameEndEffects(winner, didIWin) {
+  const [lastFiredFor, setLastFiredFor] = useState(null);
+  useEffect(() => {
+    if (!winner) { setLastFiredFor(null); return; }
+    if (winner === lastFiredFor) return;
+    setLastFiredFor(winner);
+
+    if (winner === 'draw') {
+      playSound('draw');
+      vibrate([80, 50, 80]);
+    } else if (didIWin) {
+      playSound('victory');
+      vibrate([100, 50, 100, 50, 200]);
+      launchConfetti({ count: 80, duration: 3000 });
+    } else {
+      playSound('defeat');
+      vibrate([200, 100, 200]);
+    }
+  }, [winner, didIWin, lastFiredFor]);
 }
 
 // ============================================================
@@ -2551,6 +2620,7 @@ function TicTacToeOnline({ room, profile, player1, player2, onUpdate }) {
 
   const result = checkTicTacToeWinner(board);
   const isMyTurn = turn === myIndex && !result;
+  useGameEndEffects(result?.winner, result?.winner === mySymbol);
 
   // Quand JE joue un coup
   const playCell = async (i) => {
@@ -2641,7 +2711,7 @@ function TicTacToeOnline({ room, profile, player1, player2, onUpdate }) {
       {result && (
         <>
           {myIndex === 0 ? (
-            <KawaiiButton fullWidth onClick={newRound}>Nouvelle manche ↻</KawaiiButton>
+            <KawaiiButton fullWidth onClick={newRound}>🔄 Revanche !</KawaiiButton>
           ) : (
             <div className="rounded-2xl p-3 text-center text-sm"
                  style={{ background: 'rgba(255,255,255,0.6)', color: C.inkLight, fontWeight: 600 }}>
@@ -2703,7 +2773,7 @@ function TicTacToe({ onBack, pseudo }) {
           );
         })}
       </div>
-      {result && (<KawaiiButton fullWidth onClick={newRound}>Nouvelle manche ↻</KawaiiButton>)}
+      {result && (<KawaiiButton fullWidth onClick={newRound}>🔄 Revanche !</KawaiiButton>)}
     </GameShell>
   );
 }
@@ -2753,6 +2823,7 @@ function Connect4Online({ room, profile, player1, player2, onUpdate }) {
   const { grid, turn, scores } = state;
   const result = checkConnect4Winner(grid);
   const isMyTurn = turn === myIndex && !result;
+  useGameEndEffects(result?.winner, result?.winner === mySymbol);
 
   // Lâcher un pion dans une colonne (il tombe en bas)
   const dropPiece = async (col) => {
@@ -2850,7 +2921,7 @@ function Connect4Online({ room, profile, player1, player2, onUpdate }) {
       {result && (
         <div className="mt-4">
           {myIndex === 0 ? (
-            <KawaiiButton fullWidth onClick={newRound}>Nouvelle manche ↻</KawaiiButton>
+            <KawaiiButton fullWidth onClick={newRound}>🔄 Revanche !</KawaiiButton>
           ) : (
             <div className="rounded-2xl p-3 text-center text-sm"
                  style={{ background: 'rgba(255,255,255,0.6)', color: C.inkLight, fontWeight: 600 }}>
@@ -2919,7 +2990,7 @@ function Connect4({ onBack, pseudo }) {
           </div>
         ))}
       </div>
-      {result && (<div className="mt-4"><KawaiiButton fullWidth onClick={newRound}>Nouvelle manche ↻</KawaiiButton></div>)}
+      {result && (<div className="mt-4"><KawaiiButton fullWidth onClick={newRound}>🔄 Revanche !</KawaiiButton></div>)}
     </GameShell>
   );
 }
@@ -2965,6 +3036,13 @@ function MemoryOnline({ room, profile, player1, player2, onUpdate }) {
   const { deck, flipped, turn, scores, locked } = state;
   const allMatched = deck.every((c) => c.matched);
   const isMyTurn = turn === myIndex && !allMatched && !locked;
+
+  // Effets de fin (sons + confettis)
+  const memoryWinner = !allMatched ? null
+    : scores[0] === scores[1] ? 'draw'
+    : scores[0] > scores[1] ? 'p0' : 'p1';
+  const didIWin = memoryWinner === `p${myIndex}`;
+  useGameEndEffects(memoryWinner, didIWin);
 
   // Quand JE clique sur une carte
   const clickCard = async (i) => {
@@ -3083,7 +3161,7 @@ function MemoryOnline({ room, profile, player1, player2, onUpdate }) {
       {allMatched && (
         <>
           {myIndex === 0 ? (
-            <KawaiiButton fullWidth onClick={newGame}>Rejouer ↻</KawaiiButton>
+            <KawaiiButton fullWidth onClick={newGame}>🔄 Revanche !</KawaiiButton>
           ) : (
             <div className="rounded-2xl p-3 text-center text-sm"
                  style={{ background: 'rgba(255,255,255,0.6)', color: C.inkLight, fontWeight: 600 }}>
@@ -3152,7 +3230,7 @@ function Memory({ onBack, pseudo }) {
           </button>
         ))}
       </div>
-      {allMatched && (<KawaiiButton fullWidth onClick={fullReset}>Rejouer ↻</KawaiiButton>)}
+      {allMatched && (<KawaiiButton fullWidth onClick={fullReset}>🔄 Revanche !</KawaiiButton>)}
     </GameShell>
   );
 }
@@ -3223,6 +3301,9 @@ function BatailleOnline({ room, profile, player1, player2, onUpdate }) {
   const totalShipCells = countShipCells(ships[0]);
   const isMyTurn = turn === myIndex && winner === null;
 
+  // Effets de fin (sons + confettis)
+  useGameEndEffects(winner === null ? null : `p${winner}`, winner === myIndex);
+
   // Tirer sur une case de la grille adverse
   const fire = async (r, c) => {
     if (!isMyTurn) return;
@@ -3272,7 +3353,7 @@ function BatailleOnline({ room, profile, player1, player2, onUpdate }) {
         </p>
         <div className="mt-5">
           {myIndex === 0 ? (
-            <KawaiiButton fullWidth onClick={newGame}>Rejouer ↻</KawaiiButton>
+            <KawaiiButton fullWidth onClick={newGame}>🔄 Revanche !</KawaiiButton>
           ) : (
             <div className="text-sm" style={{ color: C.inkLight, fontWeight: 600 }}>
               ⏳ {players[0]?.pseudo || 'L\'hôte'} va lancer une nouvelle partie...
@@ -3405,6 +3486,9 @@ function EchecsOnline({ room, profile, player1, player2, onUpdate }) {
   // À qui c'est de jouer ? (selon chess.js)
   const turnColor = game.turn();              // 'w' ou 'b'
   const isMyTurn = turnColor === myColor && !winner;
+
+  // Effets de fin (sons + confettis)
+  useGameEndEffects(winner, winner === myColor);
 
   // === FONCTION : effectuer un coup ===
   const makeMove = async (from, to) => {
@@ -3675,7 +3759,7 @@ function BatailleNavale({ onBack, pseudo }) {
             {players[winner]} gagne !
           </h3>
           <p style={{ color: C.inkLight, fontWeight: 600 }}>Tous les bateaux sont coulés 🚢💥</p>
-          <div className="mt-5"><KawaiiButton fullWidth onClick={fullReset}>Rejouer ↻</KawaiiButton></div>
+          <div className="mt-5"><KawaiiButton fullWidth onClick={fullReset}>🔄 Revanche !</KawaiiButton></div>
         </div>
       </GameShell>
     );
@@ -3790,6 +3874,11 @@ function PenduOnline({ room, profile, player1, player2, onUpdate }) {
   const wrongLetters = guessed.filter((L) => !normWord.includes(L));
   const wrongCount = wrongLetters.length;
 
+  // Effets de fin (sons + confettis) — J2 (guesser) gagne si 'win', J1 (setter) gagne si 'lose'
+  const penduWinner = phase === 'win' ? 'guesser' : phase === 'lose' ? 'setter' : null;
+  const didIWinPendu = (phase === 'win' && myIndex === 1) || (phase === 'lose' && myIndex === 0);
+  useGameEndEffects(penduWinner, didIWinPendu);
+
   // Validation : J1 envoie son mot à Supabase et passe en phase 'guessing'
   const submitWord = async () => {
     const clean = wordInput.replace(/[^a-zA-ZÀ-ÿ\s-]/g, '').trim();
@@ -3888,7 +3977,7 @@ function PenduOnline({ room, profile, player1, player2, onUpdate }) {
         </p>
         <div className="mt-5">
           {isHost ? (
-            <KawaiiButton fullWidth onClick={newGame}>Rejouer ↻</KawaiiButton>
+            <KawaiiButton fullWidth onClick={newGame}>🔄 Revanche !</KawaiiButton>
           ) : (
             <div className="text-sm" style={{ color: C.inkLight, fontWeight: 600 }}>
               ⏳ {players[0]?.pseudo || 'L\'hôte'} va lancer une nouvelle partie...
@@ -4046,7 +4135,7 @@ function Pendu({ onBack, pseudo }) {
           <p style={{ color: C.inkLight, fontWeight: 600 }}>
             Le mot était : <span style={{ color: C.ink, fontWeight: 700 }}>{word.toUpperCase()}</span>
           </p>
-          <div className="mt-5"><KawaiiButton fullWidth onClick={fullReset}>Rejouer ↻</KawaiiButton></div>
+          <div className="mt-5"><KawaiiButton fullWidth onClick={fullReset}>🔄 Revanche !</KawaiiButton></div>
         </div>
       </GameShell>
     );
