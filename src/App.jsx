@@ -956,7 +956,7 @@ function FriendsScreen({ profile, onBack, onInviteToGame }) {
         <RequestsList pending={pending} sent={sent} loading={loading} onRefresh={refresh} />
       )}
       {tab === 'search' && (
-        <SearchUsers onSent={refresh} />
+        <SearchUsers onSent={refresh} profile={profile} />
       )}
     </div>
   );
@@ -1082,17 +1082,20 @@ function FriendRow({ friend, onRemoved, onInvite }) {
       </div>
       {onInvite && (
         <button onClick={() => onInvite(friend)}
-          className="text-xs px-3 py-2 rounded-full clic-press"
-          style={{ background: C.accentPink, color: C.white, fontWeight: 700 }}>
+          className="text-sm px-4 py-3 rounded-full clic-press"
+          style={{ background: C.accentPink, color: C.white, fontWeight: 700,
+                   fontFamily: '"Fredoka", sans-serif',
+                   boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
           🎮 Inviter
         </button>
       )}
       <button onClick={handleRemove}
-        className="text-xs px-2 py-2 rounded-full clic-press"
+        className="text-base px-3 py-3 rounded-full clic-press"
         style={{
           background: confirming ? '#FFD0D0' : C.cream,
           color: confirming ? '#B33' : C.inkLight,
           fontWeight: 700,
+          boxShadow: '0 3px 0 rgba(0,0,0,0.06)',
         }}>
         {confirming ? '?' : '🗑️'}
       </button>
@@ -1210,7 +1213,7 @@ function SentRow({ user }) {
 }
 
 // --- Recherche d'utilisateurs ---
-function SearchUsers({ onSent }) {
+function SearchUsers({ onSent, profile }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -1231,6 +1234,16 @@ function SearchUsers({ onSent }) {
     }, 300);
     return () => clearTimeout(timer);
   }, [query]);
+
+  const shareApp = async () => {
+    const url = `https://clicjeu.com/?ref=${encodeURIComponent(profile?.pseudo || '')}`;
+    const text = `Viens jouer avec moi sur ClicJeu ! 🎮`;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'ClicJeu', text, url }); } catch {}
+    } else {
+      navigator.clipboard.writeText(url).catch(() => {});
+    }
+  };
 
   return (
     <div>
@@ -1268,6 +1281,27 @@ function SearchUsers({ onSent }) {
           <SearchResultRow key={u.id} user={u} onSent={onSent} />
         ))}
       </div>
+
+      {/* Inviter quelqu'un sur ClicJeu (partage l'app) */}
+      <div className="rounded-3xl p-4 mt-4"
+           style={{ background: C.lavender, boxShadow: '0 4px 0 rgba(0,0,0,0.06)' }}>
+        <div className="text-center mb-3">
+          <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 700 }}>
+            PAS ENCORE INSCRIT ?
+          </div>
+        </div>
+        <button onClick={shareApp}
+          className="w-full py-3 rounded-2xl flex items-center justify-center gap-2 clic-press"
+          style={{ background: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
+          <span className="text-xl">📲</span>
+          <span style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+            Inviter un proche sur ClicJeu
+          </span>
+        </button>
+        <p className="text-xs mt-2 text-center" style={{ color: C.inkSoft, fontWeight: 600 }}>
+          Partage le lien. Une fois inscrit, il deviendra ton ami.
+        </p>
+      </div>
     </div>
   );
 }
@@ -1302,14 +1336,18 @@ function SearchResultRow({ user, onSent }) {
         )}
       </div>
       {status === 'sent' ? (
-        <div className="text-xs px-3 py-2 rounded-full"
-             style={{ background: C.mint, color: C.ink, fontWeight: 700 }}>
+        <div className="text-sm px-4 py-3 rounded-full"
+             style={{ background: C.mint, color: C.ink, fontWeight: 700,
+                      fontFamily: '"Fredoka", sans-serif',
+                      boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
           ✓ Envoyée
         </div>
       ) : (
         <button onClick={send} disabled={status === 'sending'}
-          className="text-xs px-3 py-2 rounded-full clic-press"
-          style={{ background: C.accentPink, color: C.white, fontWeight: 700 }}>
+          className="text-sm px-4 py-3 rounded-full clic-press"
+          style={{ background: C.accentPink, color: C.white, fontWeight: 700,
+                   fontFamily: '"Fredoka", sans-serif',
+                   boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
           {status === 'sending' ? '...' : '+ Ami'}
         </button>
       )}
@@ -1561,10 +1599,31 @@ function ModeSelector({ profile, gameId, onBack, onPickMode }) {
         Comment veux-tu jouer ?
       </p>
 
+      {/* En ligne en premier (plus mis en avant) */}
+      <button onClick={() => onPickMode('online')}
+        className="w-full p-5 rounded-3xl mb-3 text-left clic-press"
+        style={{
+          background: C.lavender,
+          boxShadow: '0 6px 0 rgba(0,0,0,0.06), 0 8px 18px rgba(0,0,0,0.08)',
+        }}>
+        <div className="flex items-center gap-4">
+          <div className="text-4xl">🌐</div>
+          <div className="flex-1">
+            <h3 className="text-xl"
+                style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+              En ligne avec un ami
+            </h3>
+            <p className="text-xs mt-1" style={{ color: C.inkLight, fontWeight: 600 }}>
+              À distance, invite tes amis
+            </p>
+          </div>
+        </div>
+      </button>
+
       {/* Mode local (désactivé si jeu onlineOnly) */}
       <button onClick={() => !onlineOnly && onPickMode('local')}
         disabled={onlineOnly}
-        className="w-full p-5 rounded-3xl mb-3 text-left clic-press"
+        className="w-full p-5 rounded-3xl text-left clic-press"
         style={{
           background: C.mint,
           opacity: onlineOnly ? 0.4 : 1,
@@ -1580,26 +1639,6 @@ function ModeSelector({ profile, gameId, onBack, onPickMode }) {
             </h3>
             <p className="text-xs mt-1" style={{ color: C.inkLight, fontWeight: 600 }}>
               {onlineOnly ? 'Pas disponible pour ce jeu' : 'Avec un ami à côté de toi'}
-            </p>
-          </div>
-        </div>
-      </button>
-
-      <button onClick={() => onPickMode('online')}
-        className="w-full p-5 rounded-3xl text-left clic-press"
-        style={{
-          background: C.lavender,
-          boxShadow: '0 6px 0 rgba(0,0,0,0.06), 0 8px 18px rgba(0,0,0,0.08)',
-        }}>
-        <div className="flex items-center gap-4">
-          <div className="text-4xl">🌐</div>
-          <div className="flex-1">
-            <h3 className="text-xl"
-                style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
-              En ligne avec un ami
-            </h3>
-            <p className="text-xs mt-1" style={{ color: C.inkLight, fontWeight: 600 }}>
-              À distance, avec un code de salon
             </p>
           </div>
         </div>
