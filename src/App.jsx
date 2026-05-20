@@ -722,21 +722,8 @@ function GameHub({ profile, onLogout }) {
     return () => clearTimeout(timer);
   }, [activeRoom?.id, activeRoom?.status]);
 
-  // Subscribe à la room active pour les updates (l'ami rejoint, etc.)
-  useEffect(() => {
-    if (!activeRoom) return;
-
-    const sub = subscribeToRoom(activeRoom.id, (newRoom) => {
-      setActiveRoom(newRoom);
-      // Charger le profil du nouveau joueur si présent
-      const newId = newRoom.player1_id === profile.id ? newRoom.player2_id : newRoom.player1_id;
-      if (newId && !roomProfiles[newId]) {
-        getProfilesByIds([newId]).then((p) => setRoomProfiles((prev) => ({ ...prev, ...p })));
-      }
-    });
-
-    return () => sub.unsubscribe();
-  }, [activeRoom?.id]);
+  // (La subscription à la room est gérée par Lobby qui call onRoomUpdate
+  //  pour propager les changements au state activeRoom du GameHub.)
 
   // Helpers
   const backToGames = () => {
@@ -796,7 +783,7 @@ function GameHub({ profile, onLogout }) {
   // Lobby (room active)
   if (activeRoom) {
     return (
-      <LobbyErrorBoundary onLeave={() => setActiveRoom(null)}>
+      <LobbyErrorBoundary key={activeRoom.id} onLeave={() => setActiveRoom(null)}>
         <Lobby
           profile={profile}
           room={activeRoom}
@@ -2216,7 +2203,17 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate }) {
   const [currentRoom, setCurrentRoom] = useState(room);
   const [profiles, setProfiles] = useState({});
 
-  const isHost = currentRoom.player1_id === profile.id;
+  // Sync : si le parent passe une nouvelle room (via realtime), on suit
+  useEffect(() => {
+    if (room && room.id !== currentRoom.id) {
+      setCurrentRoom(room);
+    } else if (room) {
+      // Même room, on synchronise les changements (status, state, etc.)
+      setCurrentRoom(room);
+    }
+  }, [room]);
+
+  const isHost = currentRoom?.player1_id === profile.id;
   // Guard: si le jeu n'existe pas dans notre liste → écran d'erreur
   const game = GAMES[currentRoom.game] || null;
 
