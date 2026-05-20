@@ -88,8 +88,9 @@ export async function listIncomingInvitations() {
 // callback est appelé quand une nouvelle invitation arrive
 // ============================================================
 export function subscribeToInvitations(userId, callback) {
+  const channelName = `invites-${userId}-${Math.random().toString(36).slice(2, 8)}`;
   const channel = supabase
-    .channel(`invites-${userId}`)
+    .channel(channelName)
     .on('postgres_changes',
       { event: 'INSERT', schema: 'public', table: 'rooms', filter: `invited_id=eq.${userId}` },
       (payload) => callback(payload.new)
@@ -190,8 +191,11 @@ export async function updateRoomState(roomId, patch) {
 // Retourne un objet avec .unsubscribe() pour arrêter d'écouter
 // ============================================================
 export function subscribeToRoom(roomId, callback) {
+  // Channel unique à chaque appel pour éviter "cannot add callbacks after subscribe"
+  // (qui arrive si on s'abonne deux fois à la même room en parallèle)
+  const channelName = `room-${roomId}-${Math.random().toString(36).slice(2, 8)}`;
   const channel = supabase
-    .channel(`room-${roomId}`)
+    .channel(channelName)
     .on('postgres_changes',
       { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` },
       (payload) => callback(payload.new)
