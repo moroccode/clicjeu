@@ -591,69 +591,47 @@ function AvatarPicker({ pseudo, onSave, onLogout }) {
 const GAMES = {
   morpion: {
     title: 'Tic Tac Toe', cardEmoji: '❌⭕', headerEmoji: '🎯',
-    bg: C.pink, tagline: 'Aligne 3 symboles !',
-    objective: 'Aligne 3 symboles en ligne, colonne ou diagonale avant ton adversaire.',
+    bg: C.pink, tagline: '3 en ligne !',
+    objective: 'Aligne 3 symboles avant ton adversaire.',
     rules: [
-      { icon: '👤', text: 'Le 1er joueur joue avec ❌, le 2e avec ⭕' },
-      { icon: '👆', text: 'Clique sur une case vide pour y mettre ton symbole' },
-      { icon: '🔄', text: 'Vous jouez chacun votre tour' },
-      { icon: '🏆', text: '3 symboles alignés = tu gagnes ! Sinon match nul' },
+      { icon: '👤', text: 'J1 joue ❌, J2 joue ⭕' },
+      { icon: '👆', text: 'Touche une case vide' },
+      { icon: '🔄', text: 'Chacun son tour' },
+      { icon: '🏆', text: '3 alignés = victoire !' },
     ],
   },
   connect4: {
     title: 'Puissance 4', cardEmoji: '🔴🟡', headerEmoji: '🔴',
-    bg: C.blue, tagline: 'Aligne 4 pions !',
-    objective: 'Sois le premier à aligner 4 pions de ta couleur.',
+    bg: C.blue, tagline: '4 pions à la suite !',
+    objective: 'Aligne 4 pions de ta couleur.',
     rules: [
-      { icon: '👤', text: 'Le 1er joueur = rouge 🔴, le 2e = jaune 🟡' },
-      { icon: '👆', text: 'Clique sur une colonne, ton pion tombe en bas' },
-      { icon: '📏', text: 'Aligne 4 en ligne, colonne ou diagonale' },
-      { icon: '🏆', text: 'Le premier à 4 pions alignés gagne !' },
-    ],
-  },
-  memory: {
-    title: 'Memory', cardEmoji: '🃏✨', headerEmoji: '🃏',
-    bg: C.mint, tagline: 'Trouve les paires !',
-    objective: 'Retrouve un maximum de paires d\'animaux cachées sous les cartes.',
-    rules: [
-      { icon: '👆', text: 'Clique sur 2 cartes pour les retourner' },
-      { icon: '✨', text: 'Si elles sont identiques, tu rejoues !' },
-      { icon: '🔄', text: 'Sinon, c\'est au tour de l\'autre' },
-      { icon: '🏆', text: 'Le joueur avec le plus de paires gagne' },
-    ],
-  },
-  bataille: {
-    title: 'Bataille Navale', cardEmoji: '🚢💥', headerEmoji: '🚢',
-    bg: C.lavender, tagline: 'Coule la flotte !',
-    objective: 'Trouve et coule tous les bateaux cachés de ton adversaire.',
-    rules: [
-      { icon: '🚢', text: 'Chacun a 3 bateaux cachés (4, 3 et 2 cases)' },
-      { icon: '👆', text: 'Clique sur une case de la grille adverse pour tirer' },
-      { icon: '💥', text: '💧 = à l\'eau, 🔥 = touché !' },
-      { icon: '📱', text: 'Passez-vous l\'appareil entre les tours' },
+      { icon: '👤', text: 'J1 = rouge 🔴, J2 = jaune 🟡' },
+      { icon: '👆', text: 'Touche une colonne, le pion tombe' },
+      { icon: '📏', text: 'Aligne 4 dans tous les sens' },
+      { icon: '🏆', text: 'Le 1er à 4 gagne !' },
     ],
   },
   pendu: {
     title: 'Pendu', cardEmoji: '✏️📝', headerEmoji: '✏️',
     bg: C.peach, tagline: 'Devine le mot !',
-    objective: 'Devine le mot secret avant que le bonhomme ne soit pendu.',
+    objective: 'Trouve le mot avant 6 erreurs.',
     rules: [
-      { icon: '✏️', text: 'Le 1er joueur écrit un mot en secret' },
-      { icon: '🔤', text: 'Le 2e joueur propose des lettres une par une' },
-      { icon: '6️⃣', text: 'Maximum 6 erreurs autorisées !' },
-      { icon: '🏆', text: 'Mot trouvé = celui qui devine gagne, sinon c\'est l\'autre !' },
+      { icon: '✏️', text: 'J1 écrit un mot secret' },
+      { icon: '🔤', text: 'J2 propose des lettres' },
+      { icon: '6️⃣', text: '6 erreurs max !' },
+      { icon: '🏆', text: 'Mot trouvé ? Gagné !' },
     ],
   },
   echecs: {
     title: 'Échecs', cardEmoji: '♟️👑', headerEmoji: '♟️',
     bg: C.cream, tagline: 'Le roi des jeux !',
-    objective: 'Mets le roi adverse en échec et mat pour gagner la partie.',
+    objective: 'Capture le roi adverse.',
     onlineOnly: true,  // pas de mode local pour les échecs
     rules: [
-      { icon: '👤', text: '1er joueur = blancs ⚪, 2e joueur = noirs ⚫' },
-      { icon: '👆', text: 'Touche une pièce pour voir où elle peut aller' },
-      { icon: '👑', text: 'Capture le roi adverse pour gagner' },
-      { icon: '⚠️', text: 'Échec = roi menacé, Mat = roi piégé' },
+      { icon: '👤', text: 'J1 = ⚪ blancs, J2 = ⚫ noirs' },
+      { icon: '👆', text: 'Touche une pièce pour bouger' },
+      { icon: '👑', text: 'Piège le roi !' },
+      { icon: '⚠️', text: 'Échec = menacé, Mat = piégé' },
     ],
   },
 };
@@ -718,7 +696,7 @@ function GameHub({ profile, onLogout }) {
       if (current?.status === 'waiting') {
         await cancelInvitation(activeRoom.id).catch(() => {});
         setActiveRoom(null);
-        setToast({ message: '⏱️ Pas de réponse, partie annulée', type: 'info' });
+        setToast({ message: '⏱️ Pas de réponse', type: 'info' });
         setTimeout(() => setToast(null), 4000);
       }
     }, 60000);
@@ -842,8 +820,6 @@ function GameHub({ profile, onLogout }) {
     switch (selectedGame) {
       case 'morpion':  return <TicTacToe      onBack={back} pseudo={profile.pseudo} />;
       case 'connect4': return <Connect4       onBack={back} pseudo={profile.pseudo} />;
-      case 'memory':   return <Memory         onBack={back} pseudo={profile.pseudo} />;
-      case 'bataille': return <BatailleNavale onBack={back} pseudo={profile.pseudo} />;
       case 'pendu':    return <Pendu          onBack={back} pseudo={profile.pseudo} />;
       default:         break;
     }
@@ -1033,11 +1009,12 @@ function FriendsList({ friends, loading, onRefresh, onInvite }) {
       <div className="rounded-3xl p-6 text-center" style={{
         background: C.peach, boxShadow: '0 4px 0 rgba(0,0,0,0.06)',
       }}>
-        <div className="text-5xl mb-3">🤗</div>
-        <p className="text-sm" style={{ color: C.inkLight, fontWeight: 600 }}>
-          Pas encore d'amis sur ClicJeu.
-          <br />
-          Ajoute quelqu'un via l'onglet <span style={{ color: C.accentPink, fontWeight: 700 }}>"Ajouter"</span> !
+        <div className="text-6xl mb-3">🤗</div>
+        <p className="text-base" style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+          Aucun ami pour l'instant
+        </p>
+        <p className="text-sm mt-1" style={{ color: C.inkLight, fontWeight: 600 }}>
+          👉 Onglet <span style={{ color: C.accentPink, fontWeight: 700 }}>Ajouter</span>
         </p>
       </div>
     );
@@ -1276,21 +1253,16 @@ function SearchUsers({ onSent, profile }) {
       {/* Inviter quelqu'un sur ClicJeu (partage l'app) */}
       <div className="rounded-3xl p-4 mt-4"
            style={{ background: C.lavender, boxShadow: '0 4px 0 rgba(0,0,0,0.06)' }}>
-        <div className="text-center mb-3">
-          <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 700 }}>
-            PAS ENCORE INSCRIT ?
-          </div>
-        </div>
         <button onClick={shareApp}
           className="w-full py-3 rounded-2xl flex items-center justify-center gap-2 clic-press"
           style={{ background: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
-          <span className="text-xl">📲</span>
+          <span className="text-2xl">📲</span>
           <span style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
-            Inviter un proche sur ClicJeu
+            Inviter un copain
           </span>
         </button>
         <p className="text-xs mt-2 text-center" style={{ color: C.inkSoft, fontWeight: 600 }}>
-          Partage le lien. Une fois inscrit, il deviendra ton ami.
+          Partage le lien à un ami pour qu'il rejoigne 🎮
         </p>
       </div>
     </div>
@@ -1346,9 +1318,13 @@ function SearchResultRow({ user, onSent }) {
   );
 }
 
-// --- Barre de profil (avatar + pseudo + menu déconnexion) ---
+// --- Barre de profil : 3 boutons à rôles clairs ---
+// LEFT : profil (avatar + pseudo) → menu identité (déconnexion)
+// MIDDLE : ⚙️ réglages (son, vibration)
+// RIGHT : 👥 amis (avec badge)
 function ProfileBar({ profile, onLogout, onOpenFriends, pendingFriends = 0 }) {
-  const [open, setOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [soundOn, setSnd] = useState(isSoundOn());
   const [vibOn, setVib]   = useState(isVibrationOn());
 
@@ -1363,66 +1339,99 @@ function ProfileBar({ profile, onLogout, onOpenFriends, pendingFriends = 0 }) {
     if (v) vibrate(40);
   };
 
+  // Ferme tout autre menu quand on en ouvre un (sinon ils se superposent)
+  const openProfile = () => { tap(); setSettingsOpen(false); setProfileOpen(v => !v); };
+  const openSettings = () => { tap(); setProfileOpen(false); setSettingsOpen(v => !v); };
+
+  // Style commun pour les pills du haut
+  const pillStyle = {
+    background: C.white,
+    boxShadow: '0 3px 0 rgba(0,0,0,0.06)',
+  };
+
   return (
-    <div className="flex items-center justify-between mb-6">
-      {/* Avatar + pseudo → dropdown */}
+    <div className="flex items-center justify-between mb-6 gap-2">
+      {/* GAUCHE : profil */}
       <div className="relative">
-        <button onClick={() => { tap(); setOpen(!open); }}
-          className="flex items-center gap-2 px-3 py-2 rounded-full"
-          style={{ background: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
+        <button onClick={openProfile}
+          className="flex items-center gap-2 px-3 py-2 rounded-full clic-press"
+          style={pillStyle}>
           <span className="text-2xl">{profile.avatar}</span>
-          <span style={{ color: C.ink, fontWeight: 700 }}>{profile.pseudo}</span>
-          <span className="text-xs ml-1" style={{ color: C.inkSoft }}>▾</span>
+          <span style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+            {profile.pseudo}
+          </span>
         </button>
 
-        {open && (
+        {profileOpen && (
           <div className="absolute left-0 top-full mt-2 rounded-2xl p-2 z-20" style={{
-            background: C.white, minWidth: 200,
+            background: C.white, minWidth: 180,
             boxShadow: '0 6px 16px rgba(0,0,0,0.12)',
           }}>
-            {/* Toggle son */}
-            <button onClick={toggleSound}
-              className="w-full text-left px-3 py-2 rounded-xl text-sm clic-press flex items-center justify-between"
-              style={{ color: C.ink, fontWeight: 700 }}>
-              <span>{soundOn ? '🔊 Son' : '🔇 Son coupé'}</span>
-              <span className="text-xs" style={{ color: soundOn ? C.accentPink : C.inkSoft }}>
-                {soundOn ? 'ON' : 'OFF'}
-              </span>
-            </button>
-            {/* Toggle vibration */}
-            <button onClick={toggleVib}
-              className="w-full text-left px-3 py-2 rounded-xl text-sm clic-press flex items-center justify-between"
-              style={{ color: C.ink, fontWeight: 700 }}>
-              <span>{vibOn ? '📳 Vibration' : '🚫 Vibration'}</span>
-              <span className="text-xs" style={{ color: vibOn ? C.accentPink : C.inkSoft }}>
-                {vibOn ? 'ON' : 'OFF'}
-              </span>
-            </button>
-            <div style={{ height: 1, background: C.cream, margin: '4px 0' }}></div>
-            <button onClick={() => { setOpen(false); onLogout(); }}
+            <button onClick={() => { setProfileOpen(false); onLogout(); }}
               className="w-full text-left px-3 py-2 rounded-xl text-sm clic-press"
-              style={{ color: C.accentPink, fontWeight: 700 }}>
+              style={{ color: C.accentPink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
               🚪 Se déconnecter
             </button>
           </div>
         )}
       </div>
 
-      {/* Bouton amis — toujours visible */}
-      {onOpenFriends && (
-        <button onClick={() => { tap(); onOpenFriends(); }}
-          className="relative flex items-center gap-2 px-4 py-2 rounded-full clic-press"
-          style={{ background: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
-          <span style={{ color: C.ink, fontWeight: 700 }}>👥</span>
-          <span style={{ color: C.ink, fontWeight: 700, fontSize: '0.85rem' }}>Amis</span>
-          {pendingFriends > 0 && (
-            <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full text-xs flex items-center justify-center"
-                  style={{ background: C.accentPink, color: C.white, fontWeight: 700 }}>
-              {pendingFriends}
-            </span>
+      {/* DROITE : 2 icônes côte à côte */}
+      <div className="flex items-center gap-2">
+        {/* Réglages */}
+        <div className="relative">
+          <button onClick={openSettings}
+            className="w-11 h-11 rounded-full flex items-center justify-center text-xl clic-press"
+            style={pillStyle}
+            aria-label="Réglages">
+            ⚙️
+          </button>
+
+          {settingsOpen && (
+            <div className="absolute right-0 top-full mt-2 rounded-2xl p-2 z-20" style={{
+              background: C.white, minWidth: 200,
+              boxShadow: '0 6px 16px rgba(0,0,0,0.12)',
+            }}>
+              <button onClick={toggleSound}
+                className="w-full px-3 py-3 rounded-xl text-sm clic-press flex items-center justify-between"
+                style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+                <span>{soundOn ? '🔊 Son' : '🔇 Son'}</span>
+                <span className="text-xs px-2 py-0.5 rounded-full"
+                      style={{ background: soundOn ? C.mint : C.cream,
+                               color: soundOn ? C.ink : C.inkSoft, fontWeight: 700 }}>
+                  {soundOn ? 'ON' : 'OFF'}
+                </span>
+              </button>
+              <button onClick={toggleVib}
+                className="w-full px-3 py-3 rounded-xl text-sm clic-press flex items-center justify-between"
+                style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+                <span>{vibOn ? '📳 Vibration' : '🚫 Vibration'}</span>
+                <span className="text-xs px-2 py-0.5 rounded-full"
+                      style={{ background: vibOn ? C.mint : C.cream,
+                               color: vibOn ? C.ink : C.inkSoft, fontWeight: 700 }}>
+                  {vibOn ? 'ON' : 'OFF'}
+                </span>
+              </button>
+            </div>
           )}
-        </button>
-      )}
+        </div>
+
+        {/* Amis */}
+        {onOpenFriends && (
+          <button onClick={() => { tap(); onOpenFriends(); }}
+            className="relative w-11 h-11 rounded-full flex items-center justify-center text-xl clic-press"
+            style={pillStyle}
+            aria-label="Amis">
+            👥
+            {pendingFriends > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full text-xs flex items-center justify-center"
+                    style={{ background: C.accentPink, color: C.white, fontWeight: 700 }}>
+                {pendingFriends}
+              </span>
+            )}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -1618,8 +1627,8 @@ function ModeSelector({ profile, gameId, onBack, onPickMode }) {
         </p>
       </div>
 
-      <p className="text-center text-sm mb-4" style={{ color: C.inkLight, fontWeight: 600 }}>
-        Comment veux-tu jouer ?
+      <p className="text-center text-base mb-4" style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+        Avec qui ?
       </p>
 
       {/* En ligne en premier (plus mis en avant) */}
@@ -1630,14 +1639,14 @@ function ModeSelector({ profile, gameId, onBack, onPickMode }) {
           boxShadow: '0 6px 0 rgba(0,0,0,0.06), 0 8px 18px rgba(0,0,0,0.08)',
         }}>
         <div className="flex items-center gap-4">
-          <div className="text-4xl">🌐</div>
+          <div className="text-5xl">🌐</div>
           <div className="flex-1">
             <h3 className="text-xl"
                 style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
-              En ligne avec un ami
+              Un ami à distance
             </h3>
             <p className="text-xs mt-1" style={{ color: C.inkLight, fontWeight: 600 }}>
-              À distance, invite tes amis
+              Invite un copain 📲
             </p>
           </div>
         </div>
@@ -1654,14 +1663,14 @@ function ModeSelector({ profile, gameId, onBack, onPickMode }) {
           boxShadow: '0 6px 0 rgba(0,0,0,0.06), 0 8px 18px rgba(0,0,0,0.08)',
         }}>
         <div className="flex items-center gap-4">
-          <div className="text-4xl">🤝</div>
+          <div className="text-5xl">🤝</div>
           <div className="flex-1">
             <h3 className="text-xl"
                 style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
-              Sur le même appareil
+              Sur le même téléphone
             </h3>
             <p className="text-xs mt-1" style={{ color: C.inkLight, fontWeight: 600 }}>
-              {onlineOnly ? 'Pas disponible pour ce jeu' : 'Avec un ami à côté de toi'}
+              {onlineOnly ? 'Pas dispo ici' : 'À côté de toi 👫'}
             </p>
           </div>
         </div>
@@ -2070,10 +2079,11 @@ function InviteFriendsPanel({ room, profile, onRoomUpdate }) {
           ⏳ Chargement...
         </div>
       ) : friends.length === 0 ? (
-        <div className="text-center py-4 text-sm" style={{ color: C.inkLight, fontWeight: 600 }}>
-          Pas encore d'amis sur ClicJeu.
-          <br />
-          Invite quelqu'un à s'inscrire ci-dessous ✨
+        <div className="text-center py-4">
+          <div className="text-4xl mb-2">🤗</div>
+          <p className="text-sm" style={{ color: C.inkLight, fontWeight: 600 }}>
+            Aucun ami pour l'instant
+          </p>
         </div>
       ) : (
         <div className="space-y-2 mb-3">
@@ -2104,15 +2114,12 @@ function InviteFriendsPanel({ room, profile, onRoomUpdate }) {
 
       {/* Inviter quelqu'un sur ClicJeu (partage l'app, pas la partie) */}
       <div className="mt-4 pt-4" style={{ borderTop: `1px dashed ${C.inkSoft}` }}>
-        <div className="text-xs mb-2 text-center" style={{ color: C.inkSoft, fontWeight: 700 }}>
-          PAS D'AMIS DISPO ?
-        </div>
         <button onClick={shareApp}
           className="w-full py-3 rounded-2xl flex items-center justify-center gap-2 clic-press"
           style={{ background: C.lavender, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
-          <span className="text-xl">📲</span>
+          <span className="text-2xl">📲</span>
           <span style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
-            Inviter quelqu'un sur ClicJeu
+            Inviter un copain
           </span>
         </button>
       </div>
@@ -2398,9 +2405,7 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate }) {
         switch (currentRoom.game) {
           case 'morpion':  return <TicTacToeOnline {...gameProps} />;
           case 'connect4': return <Connect4Online  {...gameProps} />;
-          case 'memory':   return <MemoryOnline    {...gameProps} />;
           case 'pendu':    return <PenduOnline     {...gameProps} />;
-          case 'bataille': return <BatailleOnline  {...gameProps} />;
           case 'echecs':   return <EchecsOnline    {...gameProps} />;
           default:
             return (
