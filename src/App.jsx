@@ -40,7 +40,7 @@ const AVATARS = ['🦊','🐼','🐶','🐱','🐰','🦁','🐯','🐸','🐨',
 // localStorage keys
 const LS = {
   ONBOARDED: 'gh_onboarded',
-  PENDING_JOIN: 'cj_pending_join',  // code à rejoindre après login (depuis un lien partagé)
+  PENDING_REF: 'cj_pending_ref',  // pseudo du parrain à associer après inscription
 };
 
 // ============================================================
@@ -133,16 +133,14 @@ export default function App() {
   const [profile, setProfile]     = useState(null);   // { pseudo, avatar, id, ... } ou null
   const [loading, setLoading]     = useState(true);   // true tant qu'on n'a pas vérifié la session
 
-  // Au tout 1er rendu : on lit ?code=XXX dans l'URL et on le stocke
-  // pour le retrouver après login. On nettoie aussi l'URL pour éviter
-  // de re-déclencher au refresh.
+  // Au tout 1er rendu : on lit ?ref=PSEUDO dans l'URL et on le stocke
+  // pour le retrouver après inscription. On nettoie aussi l'URL.
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
-      const code = params.get('code');
-      if (code) {
-        localStorage.setItem(LS.PENDING_JOIN, code.toUpperCase());
-        // Nettoie l'URL (sans recharger la page)
+      const ref = params.get('ref');
+      if (ref) {
+        localStorage.setItem(LS.PENDING_REF, ref);
         window.history.replaceState({}, '', window.location.pathname);
       }
     } catch (e) { /* tant pis */ }
@@ -204,9 +202,43 @@ export default function App() {
 
   // --- Actions ---
   // Renvoie { ok, error } pour que les formulaires affichent les erreurs
-  const signup = async ({ pseudo, pin }) => {
+  const signup = async ({ pseudo, pin, referredByPseudo }) => {
     const result = await sbSignup({ pseudo, pin });
-    // Le profil sera chargé automatiquement via onAuthStateChange
+    if (result.ok && referredByPseudo) {
+      // Récupère l'id du parrain à partir de son pseudo
+      try {
+        const { data: parrain } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('pseudo', referredByPseudo)
+          .maybeSingle();
+        if (parrain?.id) {
+          // Enregistre le referred_by sur le nouveau profil
+          await supabase
+            .from('profiles')
+            .update({ referred_by: parrain.id })
+            .eq('pseudo', pseudo);
+          // Envoie une demande d'ami automatique du parrain vers le nouvel inscrit
+          // (sendFriendRequest est appelée depuis le compte du nouvel inscrit ;
+          //  on insère donc une ligne où user_id = parrain → friend_id = moi)
+          const { data: me } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('pseudo', pseudo)
+            .maybeSingle();
+          if (me?.id) {
+            await supabase.from('friendships').insert({
+              user_id: parrain.id,
+              friend_id: me.id,
+              requested_by: parrain.id,
+              status: 'pending',
+            });
+          }
+        }
+      } catch (e) { /* tant pis, le parrainage est best-effort */ }
+      // On nettoie le localStorage
+      try { localStorage.removeItem(LS.PENDING_REF); } catch {}
+    }
     return result;
   };
 
@@ -227,17 +259,17 @@ export default function App() {
 
   // --- Routage ---
   let screen;
-  // On lit le code en attente (depuis un lien partagé) pour adapter l'UI
-  const pendingJoin = (typeof window !== 'undefined') ? localStorage.getItem(LS.PENDING_JOIN) : null;
+  // On lit le pseudo de parrainage en attente (depuis un lien d'invitation)
+  const pendingRef = (typeof window !== 'undefined') ? localStorage.getItem(LS.PENDING_REF) : null;
 
   if (loading) {
     screen = <LoadingScreen />;
   } else if (!profile) {
-    screen = <AuthScreen onSignup={signup} onLogin={login} pendingJoin={pendingJoin} />;
+    screen = <AuthScreen onSignup={signup} onLogin={login} pendingRef={pendingRef} />;
   } else if (!profile.avatar) {
     screen = <AvatarPicker pseudo={profile.pseudo} onSave={saveAvatar} onLogout={logout} />;
   } else {
-    screen = <GameHub profile={profile} onLogout={logout} pendingJoin={pendingJoin} />;
+    screen = <GameHub profile={profile} onLogout={logout} />;
   }
 
   const screenKey = loading ? 'load'
@@ -326,10 +358,9 @@ function PinInput({ value, onChange, autoFocus = false }) {
 }
 
 // --- AuthScreen : page unique avec toggle ---
-function AuthScreen({ onSignup, onLogin, pendingJoin = null }) {
-  // Si on arrive depuis un lien de partage, on bascule par défaut sur "Inscription"
-  // (on suppose que le destinataire n'a probablement pas de compte)
-  const [mode, setMode] = useState(pendingJoin ? 'signup' : 'signup');
+function AuthScreen({ onSignup, onLogin, pendingRef = null }) {
+  // Si on arrive depuis un lien de parrainage, on bascule par défaut sur "Inscription"
+  const [mode, setMode] = useState('signup');
   const [pseudo, setPseudo] = useState('');
   const [pin, setPin] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -342,7 +373,6 @@ function AuthScreen({ onSignup, onLogin, pendingJoin = null }) {
   const pinOk = pin.length === 4;
   const matchOk = mode === 'login' || confirm === pin;
 
-  // Quand on change de mode, on garde le pseudo mais on reset le reste
   const switchMode = (newMode) => {
     setMode(newMode);
     setPin(''); setConfirm(''); setError(''); setPseudoError('');
@@ -363,7 +393,7 @@ function AuthScreen({ onSignup, onLogin, pendingJoin = null }) {
 
     setBusy(true);
     const result = mode === 'signup'
-      ? await onSignup({ pseudo: cleanPseudo, pin })
+      ? await onSignup({ pseudo: cleanPseudo, pin, referredByPseudo: pendingRef })
       : await onLogin({ pseudo: cleanPseudo, pin });
     setBusy(false);
 
@@ -381,20 +411,17 @@ function AuthScreen({ onSignup, onLogin, pendingJoin = null }) {
         <Logo size={140} />
       </div>
 
-      {/* Bandeau d'invitation si on arrive depuis un lien partagé */}
-      {pendingJoin && (
+      {/* Bandeau de parrainage si on arrive depuis un lien d'invitation */}
+      {pendingRef && (
         <div className="rounded-2xl p-4 mb-4 text-center clic-fade-in" style={{
           background: C.peach, boxShadow: '0 4px 0 rgba(0,0,0,0.06)',
         }}>
-          <div className="text-3xl mb-1">🎮</div>
+          <div className="text-3xl mb-1">🎉</div>
           <p className="text-sm" style={{ color: C.ink, fontWeight: 700 }}>
-            On t'a invité à jouer !
-          </p>
-          <p className="text-xs mt-1" style={{ color: C.inkLight, fontWeight: 600 }}>
-            Code de la partie : <span style={{ color: C.accentPink, fontWeight: 700 }}>{pendingJoin}</span>
+            <span style={{ color: C.accentPink }}>{pendingRef}</span> t'a invité sur ClicJeu !
           </p>
           <p className="text-xs mt-2" style={{ color: C.inkLight, fontWeight: 600 }}>
-            Inscris-toi ou connecte-toi pour rejoindre 👇
+            Inscris-toi pour devenir son ami et jouer ensemble 👇
           </p>
         </div>
       )}
@@ -633,56 +660,35 @@ const GAMES = {
 // GAMEHUB — niveau supérieur de l'app connectée
 // Gère plusieurs rooms ouvertes + notifications de tour
 // ============================================================
-function GameHub({ profile, onLogout, pendingJoin = null }) {
+function GameHub({ profile, onLogout }) {
   // Navigation
   const [selectedGame, setSelectedGame] = useState(null);
-  const [mode, setMode]                 = useState(null);
+  const [mode, setMode]                 = useState(null);  // null | 'local' | 'online'
   const [showRules, setShowRules]       = useState(false);
   const [showFriends, setShowFriends]   = useState(false);
+  const [creatingRoom, setCreatingRoom] = useState(false);
 
-  // Rejoindre via lien (?code=...)
-  const [autoJoinCode, setAutoJoinCode] = useState(pendingJoin);
+  // UNE seule room active à la fois
+  const [activeRoom, setActiveRoom]   = useState(null);
 
-  // Plusieurs rooms ouvertes
-  const [myRooms, setMyRooms]           = useState([]);
-  const [activeRoomId, setActiveRoomId] = useState(null);
-
-  // Notifications (quelqu'un rejoint / mon tour)
-  const [notifications, setNotifications] = useState([]);
-
-  // Invitations reçues de mes amis
+  // Invitations reçues (bannière sur GamesGrid)
   const [incomingInvites, setIncomingInvites] = useState([]);
 
-  // Cache profils des joueurs des rooms
+  // Cache profils
   const [roomProfiles, setRoomProfiles] = useState({});
 
-  // Ref pour éviter le stale closure dans les subscriptions
-  const activeRoomIdRef = React.useRef(activeRoomId);
-  useEffect(() => { activeRoomIdRef.current = activeRoomId; }, [activeRoomId]);
+  // Demandes d'amis (badge sur GamesGrid)
+  const [pendingFriendRequests, setPendingFriendRequests] = useState(0);
 
-  // Efface le code du localStorage une fois consommé
-  useEffect(() => {
-    if (autoJoinCode) {
-      try { localStorage.removeItem(LS.PENDING_JOIN); } catch {}
-    }
-  }, [autoJoinCode]);
+  // Toast d'erreur (timeout 60s, etc.)
+  const [toast, setToast] = useState(null);  // {message, type}
 
-  // Au montage : charge mes rooms ouvertes + invitations reçues
+  // Charge les invitations + nombre de demandes d'amis au montage
   useEffect(() => {
     let mounted = true;
 
-    listMyRooms().then((rooms) => {
-      if (!mounted) return;
-      setMyRooms(rooms);
-      const ids = [...new Set(rooms.flatMap((r) =>
-        [r.player1_id, r.player2_id, r.invited_id].filter(Boolean)
-      ))];
-      if (ids.length > 0) {
-        getProfilesByIds(ids).then((p) => { if (mounted) setRoomProfiles(p); });
-      }
-    });
-
     listIncomingInvitations().then((list) => { if (mounted) setIncomingInvites(list); });
+    listPendingRequests().then((list) => { if (mounted) setPendingFriendRequests(list.length); });
 
     const invSub = subscribeToInvitations(profile.id, () => {
       listIncomingInvitations().then((list) => { if (mounted) setIncomingInvites(list); });
@@ -691,191 +697,155 @@ function GameHub({ profile, onLogout, pendingJoin = null }) {
     return () => { mounted = false; invSub.unsubscribe(); };
   }, [profile.id]);
 
-  // Subscribe à toutes mes rooms pour les notifications
+  // Refresh des demandes d'amis quand on quitte l'écran amis
   useEffect(() => {
-    if (myRooms.length === 0) return;
+    if (!showFriends) {
+      listPendingRequests().then((list) => setPendingFriendRequests(list.length));
+    }
+  }, [showFriends]);
 
-    const subs = myRooms.map((room) =>
-      subscribeToRoom(room.id, (newRoom) => {
-        setMyRooms((prev) => {
-          const old = prev.find((r) => r.id === newRoom.id);
-          if (!old) return prev;
+  // TIMEOUT 60s : si une room reste en waiting, on la supprime
+  useEffect(() => {
+    if (!activeRoom || activeRoom.status !== 'waiting') return;
 
-          // Quelqu'un a rejoint (waiting → playing)
-          if (old.status === 'waiting' && newRoom.status === 'playing') {
-            // Charge le profil du nouveau joueur
-            const newId = newRoom.player1_id === profile.id
-              ? newRoom.player2_id : newRoom.player1_id;
-            if (newId) {
-              getProfilesByIds([newId]).then((p) =>
-                setRoomProfiles((prev) => ({ ...prev, ...p }))
-              );
-            }
-            // Notif seulement si je ne suis pas déjà dans cette room
-            if (activeRoomIdRef.current !== newRoom.id) {
-              const notif = {
-                id: `join-${newRoom.id}-${Date.now()}`,
-                roomId: newRoom.id,
-                type: 'joined',
-                game: newRoom.game,
-                opponentId: newId,
-              };
-              setNotifications((n) => [notif, ...n.slice(0, 4)]);
-            }
-          }
+    const timer = setTimeout(async () => {
+      // Vérifier le statut actuel avant de supprimer
+      const { data: current } = await supabase.from('rooms').select('status').eq('id', activeRoom.id).single();
+      if (current?.status === 'waiting') {
+        await cancelInvitation(activeRoom.id).catch(() => {});
+        setActiveRoom(null);
+        setToast({ message: '⏱️ Pas de réponse, partie annulée', type: 'info' });
+        setTimeout(() => setToast(null), 4000);
+      }
+    }, 60000);
 
-          // Mon tour dans une partie active
-          if (newRoom.status === 'playing' && newRoom.state?.turn !== undefined) {
-            const myIndex = newRoom.player1_id === profile.id ? 0 : 1;
-            const oldTurn = old.state?.turn;
-            if (newRoom.state.turn === myIndex && oldTurn !== myIndex
-                && activeRoomIdRef.current !== newRoom.id) {
-              const notif = {
-                id: `turn-${newRoom.id}-${Date.now()}`,
-                roomId: newRoom.id,
-                type: 'turn',
-                game: newRoom.game,
-              };
-              setNotifications((n) => [notif, ...n.slice(0, 4)]);
-            }
-          }
+    return () => clearTimeout(timer);
+  }, [activeRoom?.id, activeRoom?.status]);
 
-          return prev.map((r) => r.id === newRoom.id ? newRoom : r);
-        });
-      })
-    );
+  // Subscribe à la room active pour les updates (l'ami rejoint, etc.)
+  useEffect(() => {
+    if (!activeRoom) return;
 
-    return () => subs.forEach((s) => s.unsubscribe());
-    // eslint-disable-next-line
-  }, [myRooms.map((r) => r.id).join(',')]);
+    const sub = subscribeToRoom(activeRoom.id, (newRoom) => {
+      setActiveRoom(newRoom);
+      // Charger le profil du nouveau joueur si présent
+      const newId = newRoom.player1_id === profile.id ? newRoom.player2_id : newRoom.player1_id;
+      if (newId && !roomProfiles[newId]) {
+        getProfilesByIds([newId]).then((p) => setRoomProfiles((prev) => ({ ...prev, ...p })));
+      }
+    });
+
+    return () => sub.unsubscribe();
+  }, [activeRoom?.id]);
 
   // Helpers
-  const addRoom = (room) => {
-    setMyRooms((prev) => prev.find((r) => r.id === room.id) ? prev : [room, ...prev]);
-    const ids = [room.player1_id, room.player2_id, room.invited_id].filter(Boolean);
-    if (ids.length > 0) {
-      getProfilesByIds(ids).then((p) =>
-        setRoomProfiles((prev) => ({ ...prev, ...p }))
-      );
+  const backToGames = () => {
+    setSelectedGame(null); setMode(null); setShowRules(false);
+    setShowFriends(false); setActiveRoom(null); setCreatingRoom(false);
+  };
+
+  // Création d'une room online
+  const createOnlineRoom = async (gameId, invitedId = null) => {
+    setCreatingRoom(true);
+    const result = await createRoom({ gameId, initialState: {}, invitedId });
+    setCreatingRoom(false);
+    if (result.ok) {
+      setActiveRoom(result.room);
+      // Charger profils
+      const ids = [result.room.player1_id, invitedId].filter(Boolean);
+      if (ids.length > 0) {
+        getProfilesByIds(ids).then((p) => setRoomProfiles((prev) => ({ ...prev, ...p })));
+      }
+      return result.room;
+    }
+    setToast({ message: 'Erreur : ' + result.error, type: 'error' });
+    setTimeout(() => setToast(null), 4000);
+    return null;
+  };
+
+  // Accepter une invitation reçue
+  const acceptIncoming = async (room) => {
+    setIncomingInvites((prev) => prev.filter((r) => r.id !== room.id));
+    const result = await joinRoom({ code: room.code });
+    if (result.ok) {
+      setActiveRoom(result.room);
+      const ids = [result.room.player1_id, result.room.player2_id].filter(Boolean);
+      if (ids.length > 0) {
+        getProfilesByIds(ids).then((p) => setRoomProfiles((prev) => ({ ...prev, ...p })));
+      }
+    } else {
+      setToast({ message: result.error || 'Impossible de rejoindre', type: 'error' });
+      setTimeout(() => setToast(null), 4000);
     }
   };
 
-  const updateRoom = (room) => {
-    setMyRooms((prev) => prev.map((r) => r.id === room.id ? room : r));
-  };
-
-  const removeRoom = (roomId) => {
-    setMyRooms((prev) => prev.filter((r) => r.id !== roomId));
-    if (activeRoomId === roomId) setActiveRoomId(null);
-  };
-
-  const backToGames = () => {
-    setSelectedGame(null); setMode(null); setShowRules(false);
-    setAutoJoinCode(null); setShowFriends(false);
-    setActiveRoomId(null); setCreatingRoom(false);
-  };
-
-  const closeRoom = () => {
-    setActiveRoomId(null); setSelectedGame(null); setMode(null);
-  };
-
-  const dismissNotif = (id) => setNotifications((n) => n.filter((x) => x.id !== id));
-
-  // Créer une room online pour un jeu donné (utilisé depuis OnlineGameScreen)
-  // Exposé via props
-
   // === ROUTAGE ===
 
-  // 0. Rejoindre via lien partagé (?code=...)
-  if (autoJoinCode) {
-    return <JoinRoomScreen
-      profile={profile}
-      onBack={() => setAutoJoinCode(null)}
-      autoJoinCode={autoJoinCode}
-      onJoined={(room) => {
-        addRoom(room);
-        setAutoJoinCode(null);
-        setActiveRoomId(room.id);
-      }}
-    />;
-  }
+  if (creatingRoom) return <LoadingScreen />;
 
-  // 1. Ecran amis
+  // Écran amis
   if (showFriends) {
     return <FriendsScreen profile={profile} onBack={() => setShowFriends(false)}
       onInviteToGame={async (friend, gameId) => {
         setShowFriends(false);
-        const result = await createRoom({ gameId, initialState: {}, invitedId: friend.id });
-        if (result.ok) { addRoom(result.room); setActiveRoomId(result.room.id); }
+        await createOnlineRoom(gameId, friend.id);
       }}
     />;
   }
 
-  // 2. Lobby (room active)
-  if (activeRoomId) {
-    const room = myRooms.find((r) => r.id === activeRoomId);
-    if (!room) { setActiveRoomId(null); return null; }
+  // Lobby (room active)
+  if (activeRoom) {
     return (
-      <LobbyErrorBoundary onLeave={closeRoom}>
+      <LobbyErrorBoundary onLeave={() => setActiveRoom(null)}>
         <Lobby
           profile={profile}
-          room={room}
-          onRoomUpdate={updateRoom}
-          onLeave={closeRoom}
-          onCancel={async () => {
-            if (room.status === 'waiting') {
-              await cancelInvitation(room.id).catch(() => {});
-              removeRoom(room.id);
-            } else {
-              removeRoom(room.id);
+          room={activeRoom}
+          roomProfiles={roomProfiles}
+          onRoomUpdate={setActiveRoom}
+          onLeave={async () => {
+            // Quitter = annuler + supprimer (un seul comportement maintenant)
+            if (activeRoom.status === 'waiting') {
+              await cancelInvitation(activeRoom.id).catch(() => {});
             }
-            closeRoom();
+            setActiveRoom(null);
           }}
-          onFinished={() => { removeRoom(room.id); closeRoom(); }}
+          onFinished={() => setActiveRoom(null)}
         />
       </LobbyErrorBoundary>
     );
   }
 
-  // 3. Choix du mode (Local / Online)
+  // Choix du mode
   if (selectedGame && !mode) {
     return <ModeSelector profile={profile} gameId={selectedGame}
       onBack={() => setSelectedGame(null)}
       onPickMode={(m) => {
         setMode(m);
         if (m === 'local') setShowRules(true);
-        // Pour online : le routing ci-dessous prend le relais
       }}
     />;
   }
 
-  // 4. Page "Jouer en ligne" pour ce jeu — écran intermédiaire
-  //    Montre les parties existantes + bouton créer une nouvelle
+  // Mode online → écran d'invitation
   if (selectedGame && mode === 'online') {
-    return <OnlineGameScreen
+    return <InviteToPlayScreen
       profile={profile}
       gameId={selectedGame}
-      myRooms={myRooms}
-      roomProfiles={roomProfiles}
       onBack={() => setMode(null)}
-      onOpenRoom={(id) => setActiveRoomId(id)}
-      onCancelRoom={async (roomId) => {
-        await cancelInvitation(roomId).catch(() => {});
-        removeRoom(roomId);
-      }}
-      onCreateNew={async () => {
-        const result = await createRoom({ gameId: selectedGame, initialState: {} });
-        if (result.ok) { addRoom(result.room); setActiveRoomId(result.room.id); }
+      onInviteFriend={async (friend) => {
+        await createOnlineRoom(selectedGame, friend.id);
       }}
     />;
   }
 
-  // 5. Mode local → règles puis jeu
+  // Mode local : règles
   if (selectedGame && mode === 'local' && showRules) {
     return <RulesScreen gameId={selectedGame}
       onBack={() => { setMode(null); setShowRules(false); }}
       onStart={() => setShowRules(false)} />;
   }
+
+  // Mode local : jeu
   if (selectedGame && mode === 'local' && !showRules) {
     const back = () => setMode(null);
     switch (selectedGame) {
@@ -888,30 +858,23 @@ function GameHub({ profile, onLogout, pendingJoin = null }) {
     }
   }
 
-  // 6. Grille des jeux (écran principal)
+  // Écran principal : GamesGrid
   return (
     <GamesGrid
       profile={profile} onLogout={onLogout}
       onPickGame={(id) => setSelectedGame(id)}
       onOpenFriends={() => setShowFriends(true)}
-      notifications={notifications}
-      onDismissNotif={dismissNotif}
-      onOpenRoomFromNotif={(roomId) => {
-        setActiveRoomId(roomId);
-        dismissNotif(notifications.find((n) => n.roomId === roomId)?.id);
-      }}
-      roomProfiles={roomProfiles}
+      pendingFriendRequests={pendingFriendRequests}
       incomingInvites={incomingInvites}
-      onAcceptInvite={(room) => {
-        setAutoJoinCode(room.code);
-        setIncomingInvites((prev) => prev.filter((r) => r.id !== room.id));
-      }}
+      onAcceptInvite={acceptIncoming}
       onIgnoreInvite={(roomId) => {
         setIncomingInvites((prev) => prev.filter((r) => r.id !== roomId));
       }}
+      toast={toast}
     />
   );
 }
+
 
 // ============================================================
 // FRIENDS SCREEN — Mes amis (liste + recherche + demandes)
@@ -1462,33 +1425,51 @@ function IncomingInvitesBanner({ invites, onAccept, onIgnore }) {
 }
 
 function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends,
+                      pendingFriendRequests = 0,
                       incomingInvites = [], onAcceptInvite, onIgnoreInvite,
-                      notifications = [], onDismissNotif, onOpenRoomFromNotif,
-                      roomProfiles = {} }) {
+                      toast = null }) {
   const ids = Object.keys(GAMES);
-  const [pendingFriends, setPendingFriends] = useState(0);
-
-  useEffect(() => {
-    listPendingRequests().then((list) => setPendingFriends(list.length));
-  }, []);
 
   return (
     <div className="max-w-2xl mx-auto px-5 py-6">
       <ProfileBar profile={profile} onLogout={onLogout}
-                  onOpenFriends={onOpenFriends} pendingFriends={pendingFriends} />
+                  onOpenFriends={onOpenFriends} pendingFriends={pendingFriendRequests} />
 
-      {/* Notifications de tour / quelqu'un a rejoint */}
-      {notifications.length > 0 && (
-        <div className="mb-3">
-          {notifications.map((notif) => (
-            <NotificationBanner key={notif.id} notif={notif} roomProfiles={roomProfiles}
-              onTap={() => onOpenRoomFromNotif && onOpenRoomFromNotif(notif.roomId)}
-              onDismiss={() => onDismissNotif && onDismissNotif(notif.id)} />
-          ))}
+      {/* Toast (timeout, erreur, etc.) */}
+      {toast && (
+        <div className="rounded-2xl p-3 mb-3 text-center clic-fade-in"
+             style={{
+               background: toast.type === 'error' ? '#FFD0D0' : C.peach,
+               color: toast.type === 'error' ? '#B33' : C.ink,
+               fontWeight: 700, fontSize: '0.9rem',
+               boxShadow: '0 3px 0 rgba(0,0,0,0.06)',
+             }}>
+          {toast.message}
         </div>
       )}
 
-      {/* Invitations d'amis reçues */}
+      {/* Demandes d'amis reçues — carte mise en avant */}
+      {pendingFriendRequests > 0 && (
+        <button onClick={onOpenFriends}
+          className="w-full rounded-2xl p-3 mb-3 flex items-center gap-3 clic-press"
+          style={{ background: C.peach, boxShadow: '0 4px 0 rgba(0,0,0,0.08)' }}>
+          <div className="text-2xl">🔔</div>
+          <div className="flex-1 text-left">
+            <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 700 }}>
+              DEMANDES D'AMIS
+            </div>
+            <div className="text-sm"
+                 style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+              {pendingFriendRequests === 1
+                ? '1 personne veut être ton ami'
+                : `${pendingFriendRequests} personnes veulent être tes amis`}
+            </div>
+          </div>
+          <div className="text-sm" style={{ color: C.inkSoft, fontWeight: 700 }}>→</div>
+        </button>
+      )}
+
+      {/* Invitations à jouer reçues */}
       {incomingInvites.length > 0 && (
         <IncomingInvitesBanner
           invites={incomingInvites}
@@ -1917,7 +1898,7 @@ function JoinRoomScreen({ profile, onBack, onJoined, autoJoinCode = null }) {
         <input
           type="text" value={code}
           onChange={(e) => setCode(e.target.value.toUpperCase())}
-          placeholder="BLEU-CHAT"
+          placeholder="K7M2X9"
           autoCapitalize="characters"
           className="w-full p-4 rounded-2xl text-center outline-none"
           style={{
@@ -1953,30 +1934,46 @@ function JoinRoomScreen({ profile, onBack, onJoined, autoJoinCode = null }) {
 // ============================================================
 // INVITE FRIENDS PANEL — dans le Lobby, remplace le code BLEU-CHAT
 // ============================================================
-function InviteFriendsPanel({ room, profile, onRoomUpdate, shareUrl, shareLink }) {
-  const [tab, setTab]             = useState('friends');
-  const [friends, setFriends]     = useState([]);
-  const [query, setQuery]         = useState('');
-  const [results, setResults]     = useState([]);
-  const [searching, setSearching] = useState(false);
-  const [invited, setInvited]     = useState(new Set()); // ids déjà invités depuis ce lobby
+// ============================================================
+// WAITING TIMER — Décompte 60s sur le Lobby quand on attend
+// ============================================================
+function WaitingTimer({ createdAt }) {
+  const [secondsLeft, setSecondsLeft] = useState(60);
 
-  // Charge la liste d'amis
-  useEffect(() => { listFriends().then(setFriends); }, []);
-
-  // Recherche en différé (300ms)
   useEffect(() => {
-    if (query.trim().length < 2) { setResults([]); return; }
-    const t = setTimeout(async () => {
-      setSearching(true);
-      const data = await searchUsers(query);
-      setResults(data);
-      setSearching(false);
-    }, 300);
-    return () => clearTimeout(t);
-  }, [query]);
+    const tick = () => {
+      const elapsed = Math.floor((Date.now() - new Date(createdAt).getTime()) / 1000);
+      setSecondsLeft(Math.max(0, 60 - elapsed));
+    };
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [createdAt]);
 
-  // Inviter quelqu'un : met à jour invited_id de la room + le notifie via realtime
+  if (secondsLeft <= 0) return null;
+
+  const urgent = secondsLeft <= 15;
+  return (
+    <div className="text-xs px-3 py-2 rounded-full"
+         style={{
+           background: urgent ? '#FFD0D0' : C.cream,
+           color: urgent ? '#B33' : C.inkLight,
+           fontWeight: 700, fontFamily: '"Fredoka", sans-serif',
+         }}>
+      ⏱️ {secondsLeft}s
+    </div>
+  );
+}
+
+function InviteFriendsPanel({ room, profile, onRoomUpdate }) {
+  const [friends, setFriends] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [invited, setInvited] = useState(new Set());
+
+  useEffect(() => {
+    listFriends().then((f) => { setFriends(f); setLoading(false); });
+  }, []);
+
   const invite = async (userId) => {
     if (invited.has(userId)) return;
     setInvited((prev) => new Set([...prev, userId]));
@@ -1986,27 +1983,14 @@ function InviteFriendsPanel({ room, profile, onRoomUpdate, shareUrl, shareLink }
     }
   };
 
-  const InviteeRow = ({ user }) => {
-    const wasInvited = invited.has(user.id);
-    return (
-      <div className="flex items-center gap-2 p-3 rounded-2xl mb-2"
-           style={{ background: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.05)' }}>
-        <div className="text-2xl">{user.avatar || '👤'}</div>
-        <div className="flex-1 text-sm"
-             style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
-          {user.pseudo}
-        </div>
-        <button onClick={() => invite(user.id)} disabled={wasInvited}
-          className="text-xs px-3 py-2 rounded-full clic-press"
-          style={{
-            background: wasInvited ? C.mint : C.accentPink,
-            color: C.white, fontWeight: 700,
-            opacity: wasInvited ? 0.8 : 1,
-          }}>
-          {wasInvited ? '✓ Invité' : '+ Inviter'}
-        </button>
-      </div>
-    );
+  const shareApp = async () => {
+    const url = `https://clicjeu.com/?ref=${encodeURIComponent(profile.pseudo)}`;
+    const text = `Viens jouer avec moi sur ClicJeu ! 🎮`;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'ClicJeu', text, url }); } catch {}
+    } else {
+      navigator.clipboard.writeText(url).catch(() => {});
+    }
   };
 
   return (
@@ -2018,214 +2002,90 @@ function InviteFriendsPanel({ room, profile, onRoomUpdate, shareUrl, shareLink }
         Qui veux-tu inviter ? 🎮
       </h3>
 
-      {/* Onglets Amis / Par pseudo */}
-      <div className="rounded-full p-1 flex mb-4"
-           style={{ background: C.cream, boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.05)' }}>
-        {[{ id: 'friends', label: '👥 Amis' }, { id: 'search', label: '🔍 Pseudo' }].map((t) => (
-          <button key={t.id} onClick={() => setTab(t.id)}
-            className="flex-1 py-2 rounded-full text-sm transition-all"
-            style={{
-              background: tab === t.id ? C.accentPink : 'transparent',
-              color: tab === t.id ? C.white : C.inkLight,
-              fontWeight: 700, fontFamily: '"Fredoka", sans-serif',
-            }}>
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Onglet Amis */}
-      {tab === 'friends' && (
-        <div>
-          {friends.length === 0 ? (
-            <div className="text-center py-4 text-sm" style={{ color: C.inkLight, fontWeight: 600 }}>
-              Pas encore d'amis. Ajoute-en via "👥 Amis" !
-            </div>
-          ) : (
-            friends.map((f) => <InviteeRow key={f.id} user={f} />)
-          )}
+      {/* Liste d'amis */}
+      {loading ? (
+        <div className="text-center text-sm py-4" style={{ color: C.inkLight, fontWeight: 600 }}>
+          ⏳ Chargement...
         </div>
-      )}
-
-      {/* Onglet Recherche pseudo */}
-      {tab === 'search' && (
-        <div>
-          <input type="text" value={query} onChange={(e) => setQuery(e.target.value)}
-            placeholder="Tape un pseudo..."
-            autoCapitalize="none"
-            className="w-full p-3 rounded-2xl text-sm outline-none mb-2"
-            style={{ background: C.cream, color: C.ink, fontWeight: 600,
-                     boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.05)' }} />
-          {searching && (
-            <div className="text-center text-xs py-2" style={{ color: C.inkLight, fontWeight: 600 }}>
-              🔍 Recherche...
-            </div>
-          )}
-          {!searching && query.length >= 2 && results.length === 0 && (
-            <div className="text-center text-xs py-2" style={{ color: C.inkLight, fontWeight: 600 }}>
-              Aucun résultat pour "{query}"
-            </div>
-          )}
-          {results.map((u) => <InviteeRow key={u.id} user={u} />)}
+      ) : friends.length === 0 ? (
+        <div className="text-center py-4 text-sm" style={{ color: C.inkLight, fontWeight: 600 }}>
+          Pas encore d'amis sur ClicJeu.
+          <br />
+          Invite quelqu'un à s'inscrire ci-dessous ✨
         </div>
-      )}
-
-      {/* Bouton partager (lien) */}
-      <button onClick={shareLink}
-        className="w-full py-3 mt-3 rounded-2xl flex items-center justify-center gap-2 clic-press"
-        style={{ background: C.lavender, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
-        <span className="text-xl">📲</span>
-        <span style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
-          Partager le lien
-        </span>
-      </button>
-    </div>
-  );
-}
-
-// ============================================================
-// MY ROOMS SECTION — "Mes parties" sur GamesGrid
-// ============================================================
-function MyRoomsSection({ rooms, roomProfiles, profileId, onOpenRoom, onCancelRoom }) {
-  const MAX_SHOWN   = 8;
-  const MAX_AGE_MS  = 24 * 60 * 60 * 1000; // 24h
-
-  // Ne montre que les rooms récentes (< 24h) en nombre limité
-  const visible = rooms
-    .filter((r) => Date.now() - new Date(r.created_at).getTime() < MAX_AGE_MS)
-    .slice(0, MAX_SHOWN);
-
-  if (visible.length === 0) return null;
-
-  return (
-    <div className="mb-5">
-      <div className="flex items-center justify-between mb-2 px-1">
-        <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 700 }}>
-          🎮 MES PARTIES EN COURS
-        </div>
-        {visible.filter((r) => r.status === 'waiting').length > 1 && onCancelRoom && (
-          <button
-            onClick={() => {
-              if (!window.confirm('Supprimer toutes les parties en attente ?')) return;
-              visible
-                .filter((r) => r.status === 'waiting')
-                .forEach((r) => onCancelRoom(r.id));
-            }}
-            className="text-xs px-2 py-1 rounded-full"
-            style={{ background: '#FFD0D0', color: '#B33', fontWeight: 700 }}>
-            Tout nettoyer
-          </button>
-        )}
-      </div>
-
-      <div className="space-y-2">
-        {visible.map((room) => {
-          const g = GAMES[room.game];
-          const opponentId = room.player1_id === profileId ? room.player2_id : room.player1_id;
-          const opponent = opponentId ? roomProfiles[opponentId] : null;
-          const invitedProfile = room.invited_id ? roomProfiles[room.invited_id] : null;
-          const isWaiting = room.status === 'waiting';
-
-          return (
-            <div key={room.id} className="flex items-center gap-2 rounded-2xl overflow-hidden"
-                 style={{ background: g?.bg || C.cream, boxShadow: '0 4px 0 rgba(0,0,0,0.07)' }}>
-
-              {/* Partie cliquable */}
-              <div className="flex items-center gap-3 p-3 flex-1 min-w-0 clic-press"
-                   style={{ cursor: 'pointer' }}
-                   onClick={() => onOpenRoom(room.id)}>
-                <div className="text-3xl flex-shrink-0">{g?.cardEmoji}</div>
-                <div className="min-w-0">
-                  <div className="text-sm"
-                       style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
-                    {g?.title}
-                  </div>
-                  <div className="text-xs truncate" style={{ color: C.inkLight, fontWeight: 600 }}>
-                    {isWaiting
-                      ? (invitedProfile ? `⏳ Invitation → ${invitedProfile.pseudo}` : '⏳ En attente d\'un joueur')
-                      : `vs ${opponent?.pseudo || '...'}`}
-                  </div>
+      ) : (
+        <div className="space-y-2 mb-3">
+          {friends.map((f) => {
+            const wasInvited = invited.has(f.id);
+            return (
+              <div key={f.id} className="flex items-center gap-2 p-3 rounded-2xl"
+                   style={{ background: C.cream, boxShadow: '0 2px 0 rgba(0,0,0,0.04)' }}>
+                <div className="text-2xl">{f.avatar || '👤'}</div>
+                <div className="flex-1 text-sm truncate"
+                     style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+                  {f.pseudo}
                 </div>
-              </div>
-
-              {/* Bouton supprimer */}
-              {isWaiting && onCancelRoom && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); onCancelRoom(room.id); }}
-                  className="flex-shrink-0 px-3 py-3 text-sm"
-                  style={{ color: '#B33', fontWeight: 700, background: 'rgba(255,255,255,0.4)' }}>
-                  ✕
+                <button onClick={() => invite(f.id)} disabled={wasInvited}
+                  className="text-xs px-3 py-2 rounded-full clic-press"
+                  style={{
+                    background: wasInvited ? C.mint : C.accentPink,
+                    color: C.white, fontWeight: 700,
+                    opacity: wasInvited ? 0.8 : 1,
+                  }}>
+                  {wasInvited ? '✓ Invité' : '+ Inviter'}
                 </button>
-              )}
-              {!isWaiting && (
-                <div className="px-3 text-xs" style={{ color: C.inkSoft }}>→</div>
-              )}
-            </div>
-          );
-        })}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Inviter quelqu'un sur ClicJeu (partage l'app, pas la partie) */}
+      <div className="mt-4 pt-4" style={{ borderTop: `1px dashed ${C.inkSoft}` }}>
+        <div className="text-xs mb-2 text-center" style={{ color: C.inkSoft, fontWeight: 700 }}>
+          PAS D'AMIS DISPO ?
+        </div>
+        <button onClick={shareApp}
+          className="w-full py-3 rounded-2xl flex items-center justify-center gap-2 clic-press"
+          style={{ background: C.lavender, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
+          <span className="text-xl">📲</span>
+          <span style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+            Inviter quelqu'un sur ClicJeu
+          </span>
+        </button>
       </div>
     </div>
   );
 }
 
 // ============================================================
-// NOTIFICATION BANNER — "Quelqu'un a rejoint" ou "C'est ton tour"
+// INVITE TO PLAY SCREEN — choisir un ami pour jouer
+// (après "En ligne", avant la création de la room)
 // ============================================================
-function NotificationBanner({ notif, roomProfiles, onTap, onDismiss }) {
-  const g = GAMES[notif.game];
-  const opponent = notif.opponentId ? roomProfiles[notif.opponentId] : null;
-
-  const text = notif.type === 'joined'
-    ? `🎉 ${opponent?.pseudo || 'Un ami'} a rejoint ${g?.title || 'la partie'} !`
-    : `⚡ C'est ton tour dans ${g?.title || 'la partie'} !`;
-
-  const bg = notif.type === 'turn' ? C.accentPink : C.mint;
-
-  return (
-    <div className="flex items-center gap-2 p-3 rounded-2xl mb-2 clic-fade-in"
-         style={{ background: bg, boxShadow: '0 4px 0 rgba(0,0,0,0.08)' }}>
-      <div className="flex-1 text-sm" style={{ color: C.white, fontWeight: 700 }}>
-        {text}
-      </div>
-      <button onClick={onTap}
-        className="text-xs px-3 py-2 rounded-full clic-press"
-        style={{ background: 'rgba(255,255,255,0.3)', color: C.white, fontWeight: 700 }}>
-        Jouer →
-      </button>
-      <button onClick={onDismiss}
-        className="text-lg px-1 rounded-full"
-        style={{ color: 'rgba(255,255,255,0.8)', fontWeight: 700 }}>
-        ✕
-      </button>
-    </div>
-  );
-}
-
-// ============================================================
-// ONLINE GAME SCREEN — Écran intermédiaire entre ModeSelector et Lobby
-// Montre les parties existantes pour ce jeu + bouton créer
-// ============================================================
-function OnlineGameScreen({ profile, gameId, myRooms, roomProfiles, onBack, onOpenRoom, onCancelRoom, onCreateNew }) {
+function InviteToPlayScreen({ profile, gameId, onBack, onInviteFriend }) {
   const g = GAMES[gameId];
-  const [creating, setCreating] = useState(false);
-  const [error, setError] = useState('');
+  const [friends, setFriends] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [inviting, setInviting] = useState(null); // id en cours d'invitation
 
-  const MAX_AGE = 24 * 60 * 60 * 1000;
-  // Rooms pour CE jeu seulement (max 5, < 24h)
-  const gameRooms = myRooms
-    .filter((r) => r.game === gameId)
-    .filter((r) => Date.now() - new Date(r.created_at).getTime() < MAX_AGE)
-    .slice(0, 5);
+  useEffect(() => {
+    listFriends().then((f) => { setFriends(f); setLoading(false); });
+  }, []);
 
-  const handleCreate = async () => {
-    setCreating(true);
-    setError('');
-    try {
-      await onCreateNew();
-    } catch (e) {
-      setError('Erreur lors de la création. Réessaie.');
-      setCreating(false);
+  const shareApp = async () => {
+    const url = `https://clicjeu.com/?ref=${encodeURIComponent(profile.pseudo)}`;
+    const text = `Viens jouer avec moi sur ClicJeu ! 🎮`;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'ClicJeu', text, url }); } catch {}
+    } else {
+      navigator.clipboard.writeText(url).catch(() => {});
     }
+  };
+
+  const handleInvite = async (friend) => {
+    setInviting(friend.id);
+    await onInviteFriend(friend);
+    // (le parent va naviguer ailleurs si ça réussit)
   };
 
   return (
@@ -2244,75 +2104,71 @@ function OnlineGameScreen({ profile, gameId, myRooms, roomProfiles, onBack, onOp
             style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
           {g.title} en ligne
         </h2>
-        <p className="text-sm mt-1" style={{ color: C.inkLight, fontWeight: 600 }}>
-          {g.tagline}
-        </p>
       </div>
 
-      {/* Bouton créer une nouvelle partie */}
-      <button onClick={handleCreate} disabled={creating}
-        className="w-full py-4 rounded-3xl mb-6 clic-press"
-        style={{
-          background: creating ? C.inkSoft : C.accentPink,
-          boxShadow: creating ? 'none' : '0 5px 0 rgba(0,0,0,0.12)',
-          fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
-          fontSize: '1.1rem', color: C.white,
-        }}>
-        {creating ? '⏳ Création...' : '+ Créer une nouvelle partie'}
-      </button>
+      <h3 className="text-base mb-3 text-center"
+          style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+        Qui veux-tu inviter ? 🎮
+      </h3>
 
-      {error && (
-        <div className="rounded-2xl p-3 mb-4 text-center text-sm"
-             style={{ background: '#FFD0D0', color: '#B33', fontWeight: 700 }}>
-          {error}
+      {/* Liste d'amis */}
+      {loading ? (
+        <div className="text-center text-sm py-6" style={{ color: C.inkLight, fontWeight: 600 }}>
+          ⏳ Chargement...
         </div>
-      )}
-
-      {/* Parties existantes pour ce jeu */}
-      {gameRooms.length > 0 && (
-        <div>
-          <div className="text-xs mb-3 px-1" style={{ color: C.inkSoft, fontWeight: 700 }}>
-            📂 TES PARTIES EN COURS POUR CE JEU
-          </div>
-          <div className="space-y-2">
-            {gameRooms.map((room) => {
-              const opponentId = room.player1_id === profile.id ? room.player2_id : room.player1_id;
-              const opponent = opponentId ? roomProfiles[opponentId] : null;
-              const invitedPseudo = room.invited_id ? roomProfiles[room.invited_id]?.pseudo : null;
-              const isWaiting = room.status === 'waiting';
-
-              return (
-                <div key={room.id} className="flex items-center gap-2 rounded-2xl overflow-hidden"
-                     style={{ background: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
-                  <div className="flex-1 flex items-center gap-3 p-3 clic-press"
-                       style={{ cursor: 'pointer' }}
-                       onClick={() => onOpenRoom(room.id)}>
-                    <div className="text-2xl">{isWaiting ? '⏳' : '🎮'}</div>
-                    <div className="min-w-0">
-                      <div className="text-sm"
-                           style={{ color: C.ink, fontWeight: 700 }}>
-                        {isWaiting
-                          ? (invitedPseudo ? `Invitation → ${invitedPseudo}` : 'En attente d\'un joueur')
-                          : `vs ${opponent?.pseudo || '...'}`}
-                      </div>
-                      <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 600 }}>
-                        {isWaiting ? 'Tap pour inviter ou partager' : 'Reprendre la partie →'}
-                      </div>
-                    </div>
-                  </div>
-                  {isWaiting && (
-                    <button onClick={(e) => { e.stopPropagation(); onCancelRoom(room.id); }}
-                      className="flex-shrink-0 px-3 py-4 text-sm"
-                      style={{ color: '#B33', fontWeight: 700, background: '#FFF0F0' }}>
-                      ✕
-                    </button>
-                  )}
+      ) : friends.length === 0 ? (
+        <div className="rounded-3xl p-5 text-center mb-4"
+             style={{ background: C.peach, boxShadow: '0 4px 0 rgba(0,0,0,0.06)' }}>
+          <div className="text-4xl mb-2">🤗</div>
+          <p className="text-sm" style={{ color: C.inkLight, fontWeight: 600 }}>
+            Tu n'as pas encore d'amis sur ClicJeu.
+            <br />
+            Invite quelqu'un à s'inscrire avec le bouton ci-dessous ✨
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2 mb-4">
+          {friends.map((f) => (
+            <div key={f.id} className="flex items-center gap-3 p-3 rounded-2xl"
+                 style={{ background: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.05)' }}>
+              <div className="text-3xl">{f.avatar || '👤'}</div>
+              <div className="flex-1 min-w-0">
+                <div className="truncate"
+                     style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+                  {f.pseudo}
                 </div>
-              );
-            })}
-          </div>
+              </div>
+              <button onClick={() => handleInvite(f)} disabled={inviting === f.id}
+                className="text-xs px-3 py-2 rounded-full clic-press"
+                style={{ background: C.accentPink, color: C.white, fontWeight: 700,
+                         opacity: inviting === f.id ? 0.6 : 1 }}>
+                {inviting === f.id ? '...' : '+ Inviter'}
+              </button>
+            </div>
+          ))}
         </div>
       )}
+
+      {/* Inviter sur ClicJeu (partage l'app) */}
+      <div className="rounded-3xl p-4"
+           style={{ background: C.lavender, boxShadow: '0 4px 0 rgba(0,0,0,0.06)' }}>
+        <div className="text-center mb-3">
+          <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 700 }}>
+            PAS D'AMIS DISPO ?
+          </div>
+        </div>
+        <button onClick={shareApp}
+          className="w-full py-3 rounded-2xl flex items-center justify-center gap-2 clic-press"
+          style={{ background: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
+          <span className="text-xl">📲</span>
+          <span style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+            Inviter quelqu'un sur ClicJeu
+          </span>
+        </button>
+        <p className="text-xs mt-2 text-center" style={{ color: C.inkSoft, fontWeight: 600 }}>
+          Partage le lien à un proche. Une fois inscrit, il deviendra ton ami.
+        </p>
+      </div>
     </div>
   );
 }
@@ -2355,18 +2211,6 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate }) {
     return () => { mounted = false; sub.unsubscribe(); };
   }, [currentRoom.id]);
 
-  // URL de partage
-  const shareUrl = `https://clicjeu.com/?code=${currentRoom.code}`;
-  const shareLink = async () => {
-    const title = game?.title || 'ce jeu';
-    const text = `🎮 Rejoins ma partie de ${title} sur ClicJeu !`;
-    if (navigator.share) {
-      try { await navigator.share({ title: 'ClicJeu', text, url: shareUrl }); } catch {}
-    } else {
-      navigator.clipboard.writeText(shareUrl).catch(() => {});
-    }
-  };
-
   // Guard: jeu inconnu (vieille room incompatible)
   if (!game) {
     return (
@@ -2400,18 +2244,15 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate }) {
 
   return (
     <div className="max-w-md mx-auto px-5 py-8">
-      {/* Barre de navigation : Quitter (garde la room) + Annuler (supprime la room) */}
+      {/* Barre de navigation : Quitter (= annuler la partie en attente) */}
       <div className="flex items-center justify-between mb-6">
         <button onClick={onLeave} className="px-4 py-2 rounded-full text-sm clic-press"
           style={{ background: C.white, color: C.ink, fontWeight: 700,
                    boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
           ← Quitter
         </button>
-        {waiting && onCancel && (
-          <button onClick={onCancel} className="text-xs px-3 py-2 rounded-full clic-press"
-            style={{ color: '#B33', fontWeight: 700, background: '#FFD0D0' }}>
-            Annuler la partie
-          </button>
+        {waiting && (
+          <WaitingTimer createdAt={currentRoom.created_at} />
         )}
       </div>
 
@@ -2434,8 +2275,6 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate }) {
           room={currentRoom}
           profile={profile}
           onRoomUpdate={updateCurrent}
-          shareUrl={`https://clicjeu.com/?code=${currentRoom.code}`}
-          shareLink={shareLink}
         />
       )}
 
