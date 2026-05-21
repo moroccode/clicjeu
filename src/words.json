@@ -1,0 +1,70 @@
+{
+  "themes": {
+    "animaux": {
+      "label": "Animaux",
+      "emoji": "🦁",
+      "words": [
+        "chat", "chien", "lapin", "vache", "cheval", "poule", "mouton",
+        "lion", "tigre", "ours", "singe", "oiseau", "abeille", "papillon",
+        "poisson", "dauphin", "tortue", "hibou", "ecureuil", "kangourou",
+        "panda", "koala", "zebre", "girafe", "elephant", "chameau",
+        "renard", "loup", "souris", "canard"
+      ]
+    },
+    "ecole": {
+      "label": "École",
+      "emoji": "🎒",
+      "words": [
+        "cahier", "crayon", "gomme", "regle", "livre", "stylo", "classe",
+        "maitre", "ecole", "cantine", "cour", "ardoise", "table", "chaise",
+        "tableau", "leçon", "devoir", "cartable", "trousse", "feutre",
+        "ciseaux", "colle", "agenda", "dictee", "lecture", "calcul",
+        "papier", "carte", "image", "bureau"
+      ]
+    },
+    "maison": {
+      "label": "Maison",
+      "emoji": "🏠",
+      "words": [
+        "chambre", "cuisine", "salon", "jardin", "lit", "table", "chaise",
+        "lampe", "porte", "fenetre", "escalier", "douche", "miroir", "tapis",
+        "rideau", "armoire", "canape", "etagere", "horloge", "tiroir",
+        "couette", "oreiller", "bougie", "cadre", "vase", "robinet",
+        "frigo", "four", "evier", "tabouret"
+      ]
+    },
+    "aliments": {
+      "label": "Aliments",
+      "emoji": "🍎",
+      "words": [
+        "pomme", "banane", "fraise", "raisin", "orange", "citron", "poire",
+        "tomate", "carotte", "patate", "salade", "gateau", "chocolat",
+        "fromage", "pizza", "pain", "glace", "biscuit", "soupe", "poulet",
+        "yaourt", "miel", "sucre", "beurre", "pate", "riz", "oeuf",
+        "bonbon", "creme", "jambon"
+      ]
+    },
+    "sport": {
+      "label": "Sport",
+      "emoji": "⚽",
+      "words": [
+        "foot", "tennis", "danse", "velo", "course", "ski", "judo",
+        "piscine", "ballon", "raquette", "but", "panier", "natation",
+        "rugby", "boxe", "karate", "gym", "saut", "lancer", "patinage",
+        "match", "equipe", "stade", "filet", "medaille", "trophee",
+        "course", "marche", "yoga", "surf"
+      ]
+    },
+    "nature": {
+      "label": "Nature",
+      "emoji": "🌳",
+      "words": [
+        "arbre", "fleur", "soleil", "lune", "etoile", "nuage", "riviere",
+        "montagne", "mer", "plage", "sable", "foret", "herbe", "feuille",
+        "pluie", "neige", "vent", "rocher", "ile", "lac", "ciel", "racine",
+        "branche", "ruisseau", "champignon", "papillon", "abeille",
+        "fontaine", "cascade", "marguerite"
+      ]
+    }
+  }
+}
