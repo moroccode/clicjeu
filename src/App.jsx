@@ -13,6 +13,7 @@ import { tap, playSound, vibrate, launchConfetti,
          isSoundOn, setSoundOn, isVibrationOn, setVibrationOn } from './effects';
 import { startPresence, stopPresence, subscribePresence, setBusy } from './presence';
 import WORDS_JSON from './words.json';
+import COUNTRIES_JSON from './countries.json';
 
 // ============================================================
 // CLICJEU v6 — Auth pseudo + PIN BRANCHÉE SUR SUPABASE
@@ -1023,6 +1024,30 @@ const GAMES = {
       { icon: '⚠️', text: 'Échec = menacé, Mat = piégé' },
     ],
   },
+  math: {
+    title: 'Math Duel', cardEmoji: '🔢⚡', headerEmoji: '🔢',
+    bg: C.mint, tagline: 'Le plus rapide en calcul !',
+    objective: 'Réponds vite et juste — 10 questions, le meilleur gagne.',
+    hasSoloMode: true,  // jouable seul pour s'entraîner au calcul
+    rules: [
+      { icon: '🎚️', text: 'Choisis le niveau (Facile / Moyen / Difficile)' },
+      { icon: '⚡', text: 'En multi, le 1er à toucher la bonne réponse marque' },
+      { icon: '🔟', text: '10 questions par partie' },
+      { icon: '🎓', text: 'En solo : entraîne-toi au calcul mental !' },
+    ],
+  },
+  geo: {
+    title: 'Géo Quiz', cardEmoji: '🌍🇫🇷', headerEmoji: '🌍',
+    bg: C.lavender, tagline: 'Drapeaux & capitales',
+    objective: 'Reconnais drapeaux et capitales — solo ou contre un ami.',
+    hasSoloMode: true,  // unique jeu avec mode solo en V1
+    rules: [
+      { icon: '🏁', text: 'Reconnais le drapeau ou la capitale' },
+      { icon: '⚡', text: 'En multi, le 1er à toucher marque' },
+      { icon: '🔟', text: '10 questions par partie' },
+      { icon: '🎓', text: 'En solo : tu apprends en jouant !' },
+    ],
+  },
 };
 
 // ============================================================
@@ -1032,8 +1057,6 @@ const GAMES = {
 function GameHub({ profile, onLogout, onEditAvatar }) {
   // Navigation
   const [selectedGame, setSelectedGame] = useState(null);
-  const [mode, setMode]                 = useState(null);  // null | 'local' | 'online'
-  const [showRules, setShowRules]       = useState(false);
   const [showFriends, setShowFriends]   = useState(false);
   const [creatingRoom, setCreatingRoom] = useState(false);
 
@@ -1116,7 +1139,6 @@ function GameHub({ profile, onLogout, onEditAvatar }) {
         if (room) {
           setActiveRoom(room);
           setSelectedGame(room.game);
-          setMode('online');
         } else {
           try { localStorage.removeItem(LS.ACTIVE_ROOM); } catch {}
         }
@@ -1251,7 +1273,7 @@ function GameHub({ profile, onLogout, onEditAvatar }) {
 
   // Helpers
   const backToGames = () => {
-    setSelectedGame(null); setMode(null); setShowRules(false);
+    setSelectedGame(null);
     setShowFriends(false); setActiveRoom(null); setCreatingRoom(false);
   };
 
@@ -1337,38 +1359,16 @@ function GameHub({ profile, onLogout, onEditAvatar }) {
         </LobbyErrorBoundary>
       );
     }
-    if (selectedGame && !mode) {
-      return <ModeSelector profile={profile} gameId={selectedGame}
-        onBack={() => setSelectedGame(null)}
-        onPickMode={(m) => {
-          setMode(m);
-          if (m === 'local') setShowRules(true);
-        }}
-      />;
-    }
-    if (selectedGame && mode === 'online') {
+    if (selectedGame) {
+      // Tous les jeux sont online uniquement. Tap sur un jeu → écran invitation.
       return <InviteToPlayScreen
         profile={profile}
         gameId={selectedGame}
-        onBack={() => setMode(null)}
+        onBack={() => setSelectedGame(null)}
         onInviteFriend={async (friend) => {
           await createOnlineRoom(selectedGame, friend.id);
         }}
       />;
-    }
-    if (selectedGame && mode === 'local' && showRules) {
-      return <RulesScreen gameId={selectedGame}
-        onBack={() => { setMode(null); setShowRules(false); }}
-        onStart={() => setShowRules(false)} />;
-    }
-    if (selectedGame && mode === 'local' && !showRules) {
-      const back = () => setMode(null);
-      switch (selectedGame) {
-        case 'morpion':  return <TicTacToe onBack={back} pseudo={profile.pseudo} />;
-        case 'connect4': return <Connect4  onBack={back} pseudo={profile.pseudo} />;
-        // Pendu et Échecs sont onlineOnly → pas de route locale
-        default:         break;
-      }
     }
     // Par défaut : grille des jeux
     return (
@@ -1751,14 +1751,15 @@ function FriendRow({ friend, onRemoved, onInvite }) {
         </button>
       )}
       <button onClick={handleRemove}
-        className="text-base px-3 py-3 rounded-full clic-press"
+        className="text-sm px-4 py-3 rounded-full clic-press"
         style={{
-          background: confirming ? '#FFD0D0' : C.cream,
-          color: confirming ? '#B33' : C.inkLight,
+          background: confirming ? '#B33' : '#E15151',
+          color: C.white,
           fontWeight: 700,
-          boxShadow: '0 3px 0 rgba(0,0,0,0.06)',
+          fontFamily: '"Fredoka", sans-serif',
+          boxShadow: '0 3px 0 rgba(0,0,0,0.08)',
         }}>
-        {confirming ? '?' : '👋'}
+        {confirming ? 'Sûr ?' : 'Retirer'}
       </button>
     </div>
   );
@@ -2016,31 +2017,24 @@ function SearchResultRow({ user, onSent }) {
 // MIDDLE : ⚙️ réglages (son, vibration)
 // RIGHT : 👥 amis (avec badge)
 function ProfileBar({ profile, onLogout, onOpenFriends, pendingFriends = 0, onEditAvatar }) {
-  const [profileOpen, setProfileOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [soundOn, setSnd] = useState(isSoundOn());
   const [vibOn, setVib]   = useState(isVibrationOn());
 
-  // Refs pour détecter les clics en dehors du dropdown
-  const profileRef  = useRef(null);
+  // Ref pour détecter le clic en dehors du dropdown réglages
   const settingsRef = useRef(null);
 
-  // Ferme les dropdowns quand on tape ailleurs sur l'écran
+  // Ferme le dropdown réglages quand on tape ailleurs sur l'écran
   useEffect(() => {
-    if (!profileOpen && !settingsOpen) return;
+    if (!settingsOpen) return;
     const onDocClick = (e) => {
-      if (profileOpen && profileRef.current && !profileRef.current.contains(e.target)) {
-        setProfileOpen(false);
-      }
-      if (settingsOpen && settingsRef.current && !settingsRef.current.contains(e.target)) {
+      if (settingsRef.current && !settingsRef.current.contains(e.target)) {
         setSettingsOpen(false);
       }
     };
-    // pointerdown fire AVANT click, donc on capture le tap initial même
-    // sur un bouton qui va ré-ouvrir le menu
     document.addEventListener('pointerdown', onDocClick);
     return () => document.removeEventListener('pointerdown', onDocClick);
-  }, [profileOpen, settingsOpen]);
+  }, [settingsOpen]);
 
   const toggleSound = () => {
     const v = !soundOn;
@@ -2053,9 +2047,7 @@ function ProfileBar({ profile, onLogout, onOpenFriends, pendingFriends = 0, onEd
     if (v) vibrate(40);
   };
 
-  // Ferme tout autre menu quand on en ouvre un (sinon ils se superposent)
-  const openProfile  = () => { tap(); setSettingsOpen(false); setProfileOpen(v => !v); };
-  const openSettings = () => { tap(); setProfileOpen(false);  setSettingsOpen(v => !v); };
+  const openSettings = () => { tap(); setSettingsOpen(v => !v); };
 
   // Style commun pour les pills du haut
   const pillStyle = {
@@ -2065,36 +2057,17 @@ function ProfileBar({ profile, onLogout, onOpenFriends, pendingFriends = 0, onEd
 
   return (
     <div className="flex items-center justify-between mb-6 gap-2">
-      {/* GAUCHE : profil */}
-      <div className="relative" ref={profileRef}>
-        <button onClick={openProfile}
-          className="flex items-center gap-2 px-3 py-2 rounded-full clic-press"
-          style={pillStyle}>
-          <span className="text-2xl">{profile.avatar}</span>
-          <span style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
-            {profile.pseudo}
-          </span>
-        </button>
-
-        {profileOpen && (
-          <div className="absolute left-0 top-full mt-2 rounded-2xl p-2 z-20" style={{
-            background: C.white, minWidth: 200,
-            boxShadow: '0 6px 16px rgba(0,0,0,0.12)',
-          }}>
-            {onEditAvatar && (
-              <button onClick={() => { setProfileOpen(false); onEditAvatar(); }}
-                className="w-full text-left px-3 py-2 rounded-xl text-sm clic-press"
-                style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
-                🎨 Changer mon avatar
-              </button>
-            )}
-            <button onClick={() => { setProfileOpen(false); onLogout(); }}
-              className="w-full text-left px-3 py-2 rounded-xl text-sm clic-press"
-              style={{ color: C.accentPink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
-              🚪 Se déconnecter
-            </button>
-          </div>
-        )}
+      {/* GAUCHE : marque de l'app (mini-logo + clicjeu.com) */}
+      <div className="flex items-center gap-2 px-3 py-2 rounded-full"
+           style={pillStyle}>
+        <img src="/logo.png" alt=""
+             width={28} height={28}
+             style={{ display: 'block' }} />
+        <span style={{ color: C.ink, fontWeight: 700,
+                       fontFamily: '"Fredoka", sans-serif',
+                       fontSize: '0.95rem' }}>
+          clicjeu.com
+        </span>
       </div>
 
       {/* DROITE : 2 icônes côte à côte */}
@@ -2217,6 +2190,77 @@ function IncomingInvitesBanner({ invites, onAccept, onIgnore }) {
   );
 }
 
+// ============================================================
+// AvatarCard — Carte d'avatar centrée (remplace l'ancien Logo géant
+// au-dessus de "Salut Pseudo"). Cliquable → dropdown avec
+// "Changer mon avatar" et "Se déconnecter".
+// ============================================================
+function AvatarCard({ profile, onEditAvatar, onLogout }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', onDocClick);
+    return () => document.removeEventListener('pointerdown', onDocClick);
+  }, [open]);
+
+  return (
+    <div className="text-center mb-5 relative" ref={ref}>
+      <button onClick={() => { tap(); setOpen(v => !v); }}
+        className="inline-flex flex-col items-center clic-press p-3 rounded-3xl"
+        style={{
+          background: C.white,
+          boxShadow: '0 5px 0 rgba(0,0,0,0.06)',
+          minWidth: 180,
+        }}>
+        {/* Gros emoji avatar */}
+        <div className="text-6xl mb-1" style={{ lineHeight: 1 }}>
+          {profile.avatar}
+        </div>
+        {/* Pseudo en dessous */}
+        <div style={{
+          fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+          color: C.ink, fontSize: '1.2rem',
+        }}>
+          {profile.pseudo}
+        </div>
+        {/* Petit hint visuel pour montrer que c'est cliquable */}
+        <div className="text-xs mt-1" style={{ color: C.inkSoft, fontWeight: 600 }}>
+          Tape pour le menu ▾
+        </div>
+      </button>
+
+      {open && (
+        <div className="absolute left-1/2 top-full mt-2 rounded-2xl p-2 z-20"
+             style={{
+               background: C.white,
+               minWidth: 220,
+               boxShadow: '0 8px 20px rgba(0,0,0,0.15)',
+               transform: 'translateX(-50%)',
+             }}>
+          {onEditAvatar && (
+            <button onClick={() => { setOpen(false); onEditAvatar(); }}
+              className="w-full text-left px-3 py-3 rounded-xl text-sm clic-press"
+              style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+              🎨 Changer mon avatar
+            </button>
+          )}
+          <div style={{ height: 1, background: C.cream, margin: '4px 8px' }} />
+          <button onClick={() => { setOpen(false); onLogout(); }}
+            className="w-full text-left px-3 py-3 rounded-xl text-sm clic-press"
+            style={{ color: C.accentPink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+            🚪 Se déconnecter
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
                       pendingFriendRequests = 0, friends = [],
                       onQuickInvite,
@@ -2294,12 +2338,8 @@ function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
         />
       )}
 
-      <header className="text-center mb-4">
-        <div className="mb-2"><Logo size={140} /></div>
-        <p className="text-base" style={{ color: C.inkLight, fontWeight: 600 }}>
-          Salut <span style={{ color: C.ink, fontWeight: 700 }}>{profile.pseudo}</span> ! ✨
-        </p>
-      </header>
+      {/* Carte avatar centrée (remplace l'ancien gros logo) */}
+      <AvatarCard profile={profile} onEditAvatar={onEditAvatar} onLogout={onLogout} />
 
       {/* Actions sociales : 2 boutons côte à côte, toujours visibles
           (pas de flicker au montage : on n'attend pas friendCount pour rendre).
@@ -2456,88 +2496,6 @@ function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
 
 // ============================================================
 // MODE SELECTOR — Local ou Online pour un jeu donné
-// ============================================================
-function ModeSelector({ profile, gameId, onBack, onPickMode }) {
-  const g = GAMES[gameId];
-  const onlineOnly = !!g.onlineOnly;
-
-  return (
-    <div className="max-w-md mx-auto px-5 py-6">
-      <button onClick={onBack} className="mb-4 px-3 py-2 rounded-full text-sm clic-press"
-        style={{ background: C.white, color: C.ink, fontWeight: 700,
-                 boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
-        ← Autres jeux
-      </button>
-
-      {/* En-tête avec le jeu choisi */}
-      <div className="rounded-3xl p-6 text-center mb-6"
-           style={{ background: g.bg, boxShadow: '0 6px 0 rgba(0,0,0,0.06)' }}>
-        <div className="text-6xl mb-2">{g.cardEmoji}</div>
-        <h2 className="text-3xl mb-1"
-            style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
-          {g.title}
-        </h2>
-        <p className="text-sm" style={{ color: C.inkLight, fontWeight: 600 }}>
-          {g.objective}
-        </p>
-      </div>
-
-      <p className="text-center text-base mb-4" style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
-        Avec qui ?
-      </p>
-
-      {/* En ligne en premier (plus mis en avant) */}
-      <button onClick={() => { tap(); onPickMode('online'); }}
-        className="w-full p-5 rounded-3xl mb-3 text-left clic-press"
-        style={{
-          background: C.lavender,
-          boxShadow: '0 6px 0 rgba(0,0,0,0.06), 0 8px 18px rgba(0,0,0,0.08)',
-        }}>
-        <div className="flex items-center gap-4">
-          <div className="text-5xl">🌐</div>
-          <div className="flex-1">
-            <h3 className="text-xl"
-                style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
-              Un ami à distance
-            </h3>
-            <p className="text-xs mt-1" style={{ color: C.inkLight, fontWeight: 600 }}>
-              Invite un ami 📲
-            </p>
-          </div>
-        </div>
-      </button>
-
-      {/* Mode local (désactivé si jeu onlineOnly) */}
-      <button onClick={() => { if (onlineOnly) return; tap(); onPickMode('local'); }}
-        disabled={onlineOnly}
-        className="w-full p-5 rounded-3xl text-left clic-press"
-        style={{
-          background: C.mint,
-          opacity: onlineOnly ? 0.4 : 1,
-          cursor: onlineOnly ? 'not-allowed' : 'pointer',
-          boxShadow: '0 6px 0 rgba(0,0,0,0.06), 0 8px 18px rgba(0,0,0,0.08)',
-        }}>
-        <div className="flex items-center gap-4">
-          <div className="text-5xl">🤝</div>
-          <div className="flex-1">
-            <h3 className="text-xl"
-                style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
-              Sur le même téléphone
-            </h3>
-            <p className="text-xs mt-1" style={{ color: C.inkLight, fontWeight: 600 }}>
-              {onlineOnly ? 'Pas dispo ici' : 'À côté de toi 👫'}
-            </p>
-          </div>
-        </div>
-      </button>
-    </div>
-  );
-}
-
-// INVITE FRIENDS PANEL — dans le Lobby, remplace le code BLEU-CHAT
-// ============================================================
-// ============================================================
-// WAITING TIMER — Décompte 60s sur le Lobby quand on attend
 // ============================================================
 function WaitingTimer({ createdAt }) {
   const [secondsLeft, setSecondsLeft] = useState(60);
@@ -3012,6 +2970,7 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onC
           case 'connect4': return <Connect4Online  {...gameProps} />;
           case 'pendu':    return <PenduOnline     {...gameProps} />;
           case 'echecs':   return <EchecsOnline    {...gameProps} />;
+          case 'math':     return <MathDuelOnline  {...gameProps} />;
           default:
             return (
               <div className="rounded-2xl p-4 text-center" style={{
@@ -3035,97 +2994,6 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onC
 // ============================================================
 // RULES SCREEN
 // ============================================================
-function RulesScreen({ gameId, onBack, onStart }) {
-  const g = GAMES[gameId];
-  return (
-    <div className="max-w-xl mx-auto px-5 py-8">
-      <button onClick={onBack} className="mb-6 px-4 py-2 rounded-full text-sm"
-        style={{ background: C.white, color: C.ink, fontWeight: 700, boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
-        ← Retour
-      </button>
-
-      <div className="rounded-3xl p-6 md:p-8 text-center" style={{
-        background: g.bg, boxShadow: '0 6px 0 rgba(0,0,0,0.06), 0 10px 24px rgba(0,0,0,0.08)',
-      }}>
-        <div className="text-6xl mb-3">{g.cardEmoji}</div>
-        <h2 className="text-4xl mb-2" style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
-          {g.title}
-        </h2>
-
-        <div className="inline-block px-3 py-1 mb-5 rounded-full text-xs"
-             style={{ background: C.white, color: C.inkLight, fontWeight: 700 }}>
-          ✦ Comment jouer ✦
-        </div>
-
-        <div className="rounded-2xl p-4 mb-5 text-left" style={{ background: 'rgba(255,255,255,0.65)' }}>
-          <div className="text-xs mb-1" style={{ color: C.inkSoft, fontWeight: 700 }}>🎯 OBJECTIF</div>
-          <p style={{ color: C.ink, fontWeight: 600 }}>{g.objective}</p>
-        </div>
-
-        <div className="space-y-2 text-left mb-6">
-          {g.rules.map((r, i) => (
-            <div key={i} className="flex items-start gap-3 p-3 rounded-2xl"
-                 style={{ background: 'rgba(255,255,255,0.65)' }}>
-              <div className="text-2xl">{r.icon}</div>
-              <div className="flex-1 pt-1" style={{ color: C.ink, fontWeight: 600 }}>{r.text}</div>
-            </div>
-          ))}
-        </div>
-
-        <KawaiiButton fullWidth onClick={onStart}>C'est parti ! ✨</KawaiiButton>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================
-// COMPOSANTS PARTAGÉS DES JEUX
-// ============================================================
-function GameHeader({ gameId, onBack, onReset }) {
-  const g = GAMES[gameId];
-  return (
-    <header className="flex items-center justify-between mb-5">
-      <button onClick={onBack} className="px-3 py-2 rounded-full text-sm"
-        style={{ background: C.white, color: C.ink, fontWeight: 700, boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
-        ← Accueil
-      </button>
-      <h2 className="text-2xl flex items-center gap-2"
-          style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 600, color: C.ink }}>
-        <span>{g.headerEmoji}</span><span>{g.title}</span>
-      </h2>
-      <button onClick={onReset} className="px-3 py-2 rounded-full text-sm"
-        style={{ background: C.white, color: C.ink, fontWeight: 700, boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
-        ↻ Reset
-      </button>
-    </header>
-  );
-}
-
-function Scoreboard({ scores, names = ['Toi', 'Lui/Elle'], colors = [C.pink, C.blue], current = null }) {
-  return (
-    <div className="grid grid-cols-2 gap-3 mb-5">
-      {[0, 1].map((i) => {
-        const isActive = current === i;
-        return (
-          <div key={i} className="p-3 rounded-2xl text-center transition-all"
-               style={{
-                 background: colors[i],
-                 outline: isActive ? `3px solid ${C.accentPink}` : 'none',
-                 outlineOffset: '2px',
-                 boxShadow: '0 4px 0 rgba(0,0,0,0.06)',
-                 transform: isActive ? 'translateY(-2px)' : 'none',
-               }}>
-            <div className="text-xs" style={{ color: C.inkLight, fontWeight: 700 }}>{names[i]}</div>
-            <div className="text-3xl" style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
-              {scores[i]}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function Banner({ text, color = C.accentPink, thinking = false }) {
   return (
     <div className="rounded-2xl p-3 mb-4 text-center flex items-center justify-center gap-2" style={{
@@ -3161,20 +3029,6 @@ function KawaiiButton({ children, onClick, color = C.accentPink, fullWidth = fal
   );
 }
 
-function GameShell({ gameId, onBack, onReset, children }) {
-  return (
-    <div className="max-w-xl mx-auto px-4 py-6">
-      <GameHeader gameId={gameId} onBack={onBack} onReset={onReset} />
-      {children}
-    </div>
-  );
-}
-
-// ============================================================
-// Composant : actions de fin de partie (host uniquement)
-// 2 boutons côte à côte : Revanche (même jeu, même salon) + Autre jeu
-// (quitte ce salon et lance le picker de jeu pour le même ami).
-// ============================================================
 function EndGameActions({ onRematch, onChangeGame, opponentName }) {
   return (
     <div className="space-y-2">
@@ -3401,65 +3255,6 @@ function TicTacToeOnline({ room, profile, player1, player2, onUpdate, onChangeGa
   );
 }
 
-function TicTacToe({ onBack, pseudo }) {
-  const [board, setBoard] = useState(Array(9).fill(null));
-  const [turn, setTurn] = useState(0);
-  const [scores, setScores] = useState([0, 0]);
-  const [lastWinner, setLastWinner] = useState(null);
-  const symbols = ['❌', '⭕'];
-  const players = [pseudo, 'Invité'];          // J1 = utilisateur connecté, J2 = invité
-  const result = checkTicTacToeWinner(board);
-
-  useEffect(() => {
-    if (result && result.winner !== 'draw' && lastWinner !== result.winner) {
-      const idx = symbols.indexOf(result.winner);
-      setScores((s) => { const ns = [...s]; ns[idx] += 1; return ns; });
-      setLastWinner(result.winner);
-    }
-  }, [result, lastWinner]);
-
-  const playCell = (i) => {
-    if (board[i] || result) return;
-    const next = [...board]; next[i] = symbols[turn];
-    setBoard(next); setTurn(1 - turn);
-  };
-  const newRound = () => { setBoard(Array(9).fill(null)); setTurn(0); setLastWinner(null); };
-  const fullReset = () => { newRound(); setScores([0, 0]); };
-
-  let banner;
-  if (result?.winner === 'draw') banner = '🤝 Match nul !';
-  else if (result?.winner) {
-    const idx = symbols.indexOf(result.winner);
-    banner = `🎉 ${players[idx]} gagne !`;
-  }
-  else banner = `Au tour de ${players[turn]} (${symbols[turn]})`;
-
-  return (
-    <GameShell gameId="morpion" onBack={onBack} onReset={fullReset}>
-      <Scoreboard scores={scores} names={[`❌ ${players[0]}`, `⭕ ${players[1]}`]}
-                  colors={[C.pink, C.blue]} current={result ? null : turn} />
-      <Banner text={banner} color={result?.winner && result.winner !== 'draw' ? '#6BCB77' : C.accentPink} />
-      <div className="grid grid-cols-3 gap-3 mb-4" style={{ aspectRatio: '1 / 1' }}>
-        {board.map((cell, i) => {
-          const inWin = result?.line.includes(i);
-          return (
-            <button key={i} onClick={() => playCell(i)}
-              className="rounded-2xl flex items-center justify-center text-5xl transition-all"
-              style={{ background: inWin ? '#FFE89E' : C.white, boxShadow: '0 4px 0 rgba(0,0,0,0.08)',
-                       fontFamily: '"Fredoka", sans-serif' }}>{cell}</button>
-          );
-        })}
-      </div>
-      {result && (<KawaiiButton fullWidth onClick={newRound}>🔄 Revanche !</KawaiiButton>)}
-    </GameShell>
-  );
-}
-
-// ============================================================
-// JEU 2 — PUISSANCE 4
-// ============================================================
-const C4_ROWS = 6;
-const C4_COLS = 7;
 function makeC4Board() { return Array.from({ length: C4_ROWS }, () => Array(C4_COLS).fill(null)); }
 function checkConnect4Winner(grid) {
   const dirs = [[0,1],[1,0],[1,1],[1,-1]];
@@ -3617,78 +3412,6 @@ function Connect4Online({ room, profile, player1, player2, onUpdate, onChangeGam
     </div>
   );
 }
-
-function Connect4({ onBack, pseudo }) {
-  const [grid, setGrid] = useState(makeC4Board());
-  const [turn, setTurn] = useState(0);
-  const [scores, setScores] = useState([0, 0]);
-  const [lastWinner, setLastWinner] = useState(null);
-  const symbols = ['🔴', '🟡'];
-  const players = [pseudo, 'Invité'];
-  const result = checkConnect4Winner(grid);
-
-  useEffect(() => {
-    if (result && result.winner !== 'draw' && lastWinner !== result.winner) {
-      const idx = symbols.indexOf(result.winner);
-      setScores((s) => { const ns = [...s]; ns[idx] += 1; return ns; });
-      setLastWinner(result.winner);
-    }
-  }, [result, lastWinner]);
-
-  const dropPiece = (col) => {
-    if (result) return;
-    for (let r = C4_ROWS - 1; r >= 0; r--) {
-      if (!grid[r][col]) {
-        const next = grid.map((row) => [...row]); next[r][col] = symbols[turn];
-        setGrid(next); setTurn(1 - turn); return;
-      }
-    }
-  };
-  const newRound = () => { setGrid(makeC4Board()); setTurn(0); setLastWinner(null); };
-  const fullReset = () => { newRound(); setScores([0, 0]); };
-
-  let banner;
-  if (result?.winner === 'draw') banner = '🤝 Match nul !';
-  else if (result?.winner) {
-    const idx = symbols.indexOf(result.winner);
-    banner = `🎉 ${players[idx]} gagne !`;
-  }
-  else banner = `Au tour de ${players[turn]} (${symbols[turn]})`;
-  const isWinning = (r, c) => result?.cells.some(([wr, wc]) => wr === r && wc === c);
-
-  return (
-    <GameShell gameId="connect4" onBack={onBack} onReset={fullReset}>
-      <Scoreboard scores={scores} names={[`🔴 ${players[0]}`, `🟡 ${players[1]}`]}
-                  colors={[C.pink, '#FFE89E']} current={result ? null : turn} />
-      <Banner text={banner} color={result?.winner && result.winner !== 'draw' ? '#6BCB77' : C.accentPink} />
-      <div className="rounded-2xl p-2" style={{ background: C.blue, boxShadow: '0 4px 0 rgba(0,0,0,0.08)' }}>
-        {grid.map((row, r) => (
-          <div key={r} className="flex gap-1 mb-1">
-            {row.map((cell, c) => (
-              <button key={c} onClick={() => dropPiece(c)}
-                className="flex-1 rounded-full flex items-center justify-center transition-all"
-                style={{ aspectRatio: '1 / 1',
-                         background: isWinning(r, c) ? '#FFE89E' : C.cream,
-                         fontSize: '1.4rem' }}>{cell}</button>
-            ))}
-          </div>
-        ))}
-      </div>
-      {result && (<div className="mt-4"><KawaiiButton fullWidth onClick={newRound}>🔄 Revanche !</KawaiiButton></div>)}
-    </GameShell>
-  );
-}
-
-// ============================================================
-// ============================================================
-// JEU 4 — ÉCHECS (online uniquement)
-// ============================================================
-// FEN = "Forsyth-Edwards Notation" — c'est un string qui décrit l'état
-// complet d'une partie d'échecs en une ligne.
-// Exemple de la position de départ :
-//   "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-// On stocke juste ce string dans Supabase, et chess.js fait tout le reste.
-const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 function makeEchecsState() {
   return {
@@ -4254,6 +3977,856 @@ function PenduOnline({ room, profile, player1, player2, onUpdate, onChangeGame }
     </div>
   );
 }
+
+// ============================================================
+// JEU 5 — MATH DUEL (online uniquement)
+// ============================================================
+// Mécanique :
+//   1. L'hôte choisit un niveau (facile/moyen/difficile)
+//   2. 10 questions QCM générées d'un coup au moment du level-select
+//   3. Les 2 joueurs voient la même question en même temps
+//   4. Premier à taper la BONNE réponse marque 1 point + on passe à la suivante
+//   5. Mauvaise réponse = rien, on peut re-tenter (mais l'autre a déjà
+//      probablement gagné le point)
+//   6. À la fin : score affiché, host peut "Revanche" (= nouvelles questions
+//      même niveau) ou "Autre jeu"
+//
+// Approche réseau simple : last-write-wins. Quand un joueur tape la bonne
+// réponse, son client incrémente son score localement + push immédiatement
+// state.scores[i] = newScore, state.currentIdx = idx + 1. L'autre client
+// reçoit la mise à jour via Realtime et voit "trop tard" (la question a
+// avancé). Si les 2 tapent dans la même milliseconde, Supabase tranche par
+// l'ordre d'arrivée des UPDATE — un des deux gagne, c'est OK.
+// ============================================================
+
+// Génère N opérations selon le niveau
+function makeMathQuestions(level, count = 10) {
+  const questions = [];
+  for (let i = 0; i < count; i++) {
+    questions.push(generateOneQuestion(level));
+  }
+  return questions;
+}
+
+// Génère 1 question avec 4 choix (1 bon + 3 leurres)
+function generateOneQuestion(level) {
+  let a, b, op, answer;
+  if (level === 'facile') {
+    // + et − jusqu'à 20 (résultat positif garanti)
+    op = Math.random() < 0.5 ? '+' : '-';
+    if (op === '+') {
+      a = 1 + Math.floor(Math.random() * 15);
+      b = 1 + Math.floor(Math.random() * (20 - a));
+      answer = a + b;
+    } else {
+      a = 5 + Math.floor(Math.random() * 16);  // 5..20
+      b = 1 + Math.floor(Math.random() * (a - 1));  // < a
+      answer = a - b;
+    }
+  } else if (level === 'moyen') {
+    // +, -, × jusqu'à 100 (résultat positif)
+    const ops = ['+', '-', '×'];
+    op = ops[Math.floor(Math.random() * ops.length)];
+    if (op === '+') {
+      a = 10 + Math.floor(Math.random() * 50);
+      b = 10 + Math.floor(Math.random() * 40);
+      answer = a + b;
+    } else if (op === '-') {
+      a = 30 + Math.floor(Math.random() * 60);
+      b = 5 + Math.floor(Math.random() * (a - 5));
+      answer = a - b;
+    } else {
+      a = 2 + Math.floor(Math.random() * 9);  // 2..10
+      b = 2 + Math.floor(Math.random() * 9);
+      answer = a * b;
+    }
+  } else {
+    // difficile : ×, ÷ jusqu'à 100
+    const ops = ['×', '÷', '+'];
+    op = ops[Math.floor(Math.random() * ops.length)];
+    if (op === '×') {
+      a = 3 + Math.floor(Math.random() * 10);  // 3..12
+      b = 3 + Math.floor(Math.random() * 10);
+      answer = a * b;
+    } else if (op === '÷') {
+      // On garantit un résultat entier : on construit answer * b = a
+      b = 2 + Math.floor(Math.random() * 10);
+      answer = 2 + Math.floor(Math.random() * 12);
+      a = b * answer;
+    } else {
+      a = 25 + Math.floor(Math.random() * 70);
+      b = 25 + Math.floor(Math.random() * 70);
+      answer = a + b;
+    }
+  }
+  // Génère 3 leurres autour de la bonne réponse, jamais identiques
+  const decoys = new Set();
+  while (decoys.size < 3) {
+    const delta = (1 + Math.floor(Math.random() * 8)) * (Math.random() < 0.5 ? -1 : 1);
+    const cand = answer + delta;
+    if (cand > 0 && cand !== answer) decoys.add(cand);
+  }
+  const choices = [...decoys, answer].sort(() => Math.random() - 0.5);
+  return { a, b, op, answer, choices };
+}
+
+function makeMathState() {
+  return {
+    phase: 'level-select',
+    level: null,
+    questions: [],
+    currentIdx: 0,
+    scores: [0, 0],
+    lastTapBy: null,   // qui vient de bien répondre (pour micro-feedback visuel)
+    round: 1,
+  };
+}
+
+function MathDuelOnline({ room, profile, player1, player2, onUpdate, onChangeGame }) {
+  const myIndex = room.player1_id === profile.id ? 0 : 1;
+  const isHost = myIndex === 0;
+  const players = [player1, player2];
+
+  const state = (room.state && room.state.phase) ? room.state : makeMathState();
+  const { phase, level, questions, currentIdx, scores } = state;
+
+  // Feedback visuel local : quand je tape une mauvaise réponse, je veux que MON
+  // bouton flashe rouge, sans affecter l'état partagé (l'autre joueur n'a pas
+  // besoin de voir mes erreurs)
+  const [wrongTap, setWrongTap] = useState(null);
+  useEffect(() => {
+    if (wrongTap == null) return;
+    const t = setTimeout(() => setWrongTap(null), 400);
+    return () => clearTimeout(t);
+  }, [wrongTap]);
+
+  // Effets de fin de partie
+  const finalWinner = phase === 'done'
+    ? (scores[0] > scores[1] ? 0 : scores[1] > scores[0] ? 1 : 'draw')
+    : null;
+  useGameEndEffects(finalWinner, finalWinner === myIndex);
+
+  // === Hôte choisit un niveau ===
+  const pickLevel = async (lvl) => {
+    if (!isHost) return;
+    const newState = {
+      ...state,
+      phase: 'playing',
+      level: lvl,
+      questions: makeMathQuestions(lvl),
+      currentIdx: 0,
+      scores: [0, 0],
+    };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
+
+  // === Un joueur tape une réponse ===
+  const tapAnswer = async (choice) => {
+    if (phase !== 'playing') return;
+    const q = questions[currentIdx];
+    if (!q) return;
+    if (choice !== q.answer) {
+      // Mauvaise réponse → flash rouge local, pas de changement d'état partagé
+      setWrongTap(choice);
+      playSound('pop');
+      vibrate(30);
+      return;
+    }
+    // Bonne réponse : on marque + on avance
+    playSound('pop');
+    vibrate(50);
+    const newScores = [...scores];
+    newScores[myIndex] += 1;
+    const nextIdx = currentIdx + 1;
+    const newState = {
+      ...state,
+      scores: newScores,
+      currentIdx: nextIdx,
+      lastTapBy: myIndex,
+      phase: nextIdx >= questions.length ? 'done' : 'playing',
+    };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
+
+  // === Revanche (host uniquement) — nouvelles questions, même niveau ===
+  const newGame = async () => {
+    if (!isHost) return;
+    const newState = {
+      ...makeMathState(),
+      phase: 'playing',
+      level,
+      questions: makeMathQuestions(level || 'facile'),
+      round: (state.round || 1) + 1,
+    };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
+
+  // === ÉCRAN 1 : choix du niveau (hôte) ===
+  if (phase === 'level-select' && isHost) {
+    const levels = [
+      { id: 'facile', label: 'Facile', emoji: '🌱', desc: '+ et − jusqu\'à 20' },
+      { id: 'moyen', label: 'Moyen', emoji: '⚡', desc: '+, −, × jusqu\'à 100' },
+      { id: 'difficile', label: 'Difficile', emoji: '🔥', desc: '×, ÷ jusqu\'à 100' },
+    ];
+    return (
+      <div className="rounded-3xl p-5" style={{ background: C.mint, boxShadow: '0 6px 0 rgba(0,0,0,0.08)' }}>
+        <div className="text-center mb-4">
+          <div className="text-5xl mb-2">🎚️</div>
+          <h3 className="text-2xl"
+              style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+            Choisis un niveau
+          </h3>
+          <p className="text-sm mt-1" style={{ color: C.inkLight, fontWeight: 600 }}>
+            10 questions, le plus rapide à toucher la bonne réponse marque
+          </p>
+        </div>
+        <div className="space-y-3">
+          {levels.map((lvl) => (
+            <button key={lvl.id} onClick={() => pickLevel(lvl.id)}
+              className="w-full p-4 rounded-2xl clic-press flex items-center gap-3 text-left"
+              style={{ background: C.white, boxShadow: '0 4px 0 rgba(0,0,0,0.08)' }}>
+              <div className="text-3xl">{lvl.emoji}</div>
+              <div className="flex-1">
+                <div style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                              color: C.ink, fontSize: '1.05rem' }}>
+                  {lvl.label}
+                </div>
+                <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 600 }}>
+                  {lvl.desc}
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // === ÉCRAN 1 bis : invité attend que l'hôte choisisse ===
+  if (phase === 'level-select' && !isHost) {
+    return (
+      <div className="rounded-3xl p-8 text-center" style={{ background: C.mint, boxShadow: '0 6px 0 rgba(0,0,0,0.08)' }}>
+        <div className="text-6xl mb-3">⏳</div>
+        <h3 className="text-2xl mb-2" style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+          En attente...
+        </h3>
+        <p style={{ color: C.inkLight, fontWeight: 600 }}>
+          {players[0]?.pseudo || 'L\'hôte'} choisit un niveau.
+        </p>
+      </div>
+    );
+  }
+
+  // === ÉCRAN 2 : résultat final ===
+  if (phase === 'done') {
+    const isDraw = finalWinner === 'draw';
+    const isMyWin = finalWinner === myIndex;
+    const opponentForChange = isHost ? players[1] : players[0];
+    return (
+      <div className="rounded-3xl p-6 text-center" style={{
+        background: isDraw ? C.lavender : (isMyWin ? C.mint : C.pink),
+        boxShadow: '0 6px 0 rgba(0,0,0,0.08)',
+      }}>
+        <div className="text-6xl mb-3">
+          <span className="clic-celebrate">{isDraw ? '🤝' : (isMyWin ? '🎉' : '😢')}</span>
+        </div>
+        <h3 className="text-3xl mb-3" style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+          {isDraw ? 'Égalité !' : `${players[finalWinner]?.pseudo || 'Joueur'} gagne !`}
+        </h3>
+        <div className="flex items-center justify-around mb-4">
+          <div className="text-center">
+            <div className="text-2xl mb-1">{players[0]?.avatar || '👤'}</div>
+            <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 600 }}>
+              {players[0]?.pseudo || 'Hôte'}
+            </div>
+            <div className="text-3xl" style={{ fontFamily: '"Fredoka", sans-serif',
+                                                 fontWeight: 700, color: C.ink }}>
+              {scores[0]}
+            </div>
+          </div>
+          <div className="text-2xl" style={{ color: C.inkSoft }}>vs</div>
+          <div className="text-center">
+            <div className="text-2xl mb-1">{players[1]?.avatar || '👤'}</div>
+            <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 600 }}>
+              {players[1]?.pseudo || 'Invité'}
+            </div>
+            <div className="text-3xl" style={{ fontFamily: '"Fredoka", sans-serif',
+                                                 fontWeight: 700, color: C.ink }}>
+              {scores[1]}
+            </div>
+          </div>
+        </div>
+        {isHost ? (
+          <EndGameActions
+            onRematch={newGame}
+            onChangeGame={onChangeGame}
+            opponentName={opponentForChange?.pseudo}
+          />
+        ) : (
+          <div className="text-sm" style={{ color: C.inkLight, fontWeight: 600 }}>
+            ⏳ {players[0]?.pseudo || 'L\'hôte'} va relancer...
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // === ÉCRAN 3 : jeu en cours — la question + les 4 choix ===
+  const q = questions[currentIdx];
+  if (!q) return null;  // garde-fou
+
+  return (
+    <div>
+      {/* Banner avec le score live */}
+      <div className="rounded-2xl p-3 mb-3 flex items-center justify-around"
+           style={{ background: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
+        <div className="text-center">
+          <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 700 }}>
+            {players[0]?.pseudo || 'Hôte'}
+          </div>
+          <div className="text-2xl" style={{ fontFamily: '"Fredoka", sans-serif',
+                                               fontWeight: 700,
+                                               color: myIndex === 0 ? C.accentPink : C.ink }}>
+            {scores[0]}
+          </div>
+        </div>
+        <div className="text-sm" style={{ color: C.ink, fontWeight: 700 }}>
+          {currentIdx + 1} / {questions.length}
+        </div>
+        <div className="text-center">
+          <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 700 }}>
+            {players[1]?.pseudo || 'Invité'}
+          </div>
+          <div className="text-2xl" style={{ fontFamily: '"Fredoka", sans-serif',
+                                               fontWeight: 700,
+                                               color: myIndex === 1 ? C.accentPink : C.ink }}>
+            {scores[1]}
+          </div>
+        </div>
+      </div>
+
+      {/* La question, gros et centré */}
+      <div className="rounded-3xl p-8 mb-4 text-center"
+           style={{ background: C.cream, boxShadow: '0 4px 0 rgba(0,0,0,0.08)' }}>
+        <div style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                      color: C.ink, fontSize: '3rem', lineHeight: 1.1 }}>
+          {q.a} {q.op} {q.b} = ?
+        </div>
+      </div>
+
+      {/* 4 boutons QCM */}
+      <div className="grid grid-cols-2 gap-3">
+        {q.choices.map((c, i) => {
+          const isWrong = wrongTap === c;
+          return (
+            <button key={i} onClick={() => tapAnswer(c)}
+              className="rounded-2xl p-5 clic-press"
+              style={{
+                background: isWrong ? '#FFD0D0' : C.white,
+                color: C.ink,
+                fontFamily: '"Fredoka", sans-serif',
+                fontWeight: 700, fontSize: '1.6rem',
+                boxShadow: isWrong ? '0 3px 0 rgba(200,0,0,0.2)' : '0 4px 0 rgba(0,0,0,0.08)',
+                transition: 'background 0.2s',
+              }}>
+              {c}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// JEU 5 SOLO — MATH DUEL en mode entraînement
+// ============================================================
+// Identique à MathDuelOnline mais 100% local :
+//   - pas de Supabase, pas de room, pas de Realtime
+//   - juste un score affiché à la fin, pas de localStorage best score
+//   - pas de bouton "Revanche" → juste "Recommencer" (relance avec mêmes settings)
+// On réutilise generateOneQuestion + makeMathQuestions définis plus haut.
+// ============================================================
+function MathDuelSolo({ onBack }) {
+  const [phase, setPhase] = useState('level-select');  // 'level-select' | 'playing' | 'done'
+  const [level, setLevel] = useState(null);
+  const [questions, setQuestions] = useState([]);
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const [score, setScore] = useState(0);
+  const [wrongTap, setWrongTap] = useState(null);
+
+  // Flash rouge sur mauvaise réponse
+  useEffect(() => {
+    if (wrongTap == null) return;
+    const t = setTimeout(() => setWrongTap(null), 400);
+    return () => clearTimeout(t);
+  }, [wrongTap]);
+
+  const startGame = (lvl) => {
+    setLevel(lvl);
+    setQuestions(makeMathQuestions(lvl));
+    setCurrentIdx(0);
+    setScore(0);
+    setPhase('playing');
+  };
+
+  const tapAnswer = (choice) => {
+    const q = questions[currentIdx];
+    if (!q) return;
+    if (choice !== q.answer) {
+      setWrongTap(choice);
+      playSound('pop');
+      vibrate(30);
+      return;
+    }
+    playSound('pop');
+    vibrate(50);
+    const nextIdx = currentIdx + 1;
+    setScore(s => s + 1);
+    if (nextIdx >= questions.length) {
+      setPhase('done');
+      launchConfetti();
+    } else {
+      setCurrentIdx(nextIdx);
+    }
+  };
+
+  const restart = () => {
+    setPhase('level-select');
+    setQuestions([]);
+    setCurrentIdx(0);
+    setScore(0);
+  };
+
+  // ÉCRAN choix niveau
+  if (phase === 'level-select') {
+    const levels = [
+      { id: 'facile', label: 'Facile', emoji: '🌱', desc: '+ et − jusqu\'à 20' },
+      { id: 'moyen', label: 'Moyen', emoji: '⚡', desc: '+, −, × jusqu\'à 100' },
+      { id: 'difficile', label: 'Difficile', emoji: '🔥', desc: '×, ÷ jusqu\'à 100' },
+    ];
+    return (
+      <div className="max-w-md mx-auto px-5 py-6">
+        <button onClick={onBack} className="mb-4 px-3 py-2 rounded-full text-sm clic-press"
+          style={{ background: C.white, color: C.ink, fontWeight: 700,
+                   boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
+          ← Retour
+        </button>
+        <div className="rounded-3xl p-5" style={{ background: C.mint, boxShadow: '0 6px 0 rgba(0,0,0,0.08)' }}>
+          <div className="text-center mb-4">
+            <div className="text-5xl mb-2">🔢⚡</div>
+            <h3 className="text-2xl"
+                style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+              Entraînement Math
+            </h3>
+            <p className="text-sm mt-1" style={{ color: C.inkLight, fontWeight: 600 }}>
+              10 questions, à ton rythme. Bonne chance !
+            </p>
+          </div>
+          <div className="space-y-3">
+            {levels.map((lvl) => (
+              <button key={lvl.id} onClick={() => startGame(lvl.id)}
+                className="w-full p-4 rounded-2xl clic-press flex items-center gap-3 text-left"
+                style={{ background: C.white, boxShadow: '0 4px 0 rgba(0,0,0,0.08)' }}>
+                <div className="text-3xl">{lvl.emoji}</div>
+                <div className="flex-1">
+                  <div style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                                color: C.ink, fontSize: '1.05rem' }}>
+                    {lvl.label}
+                  </div>
+                  <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 600 }}>
+                    {lvl.desc}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ÉCRAN fin de partie
+  if (phase === 'done') {
+    const total = questions.length;
+    const great = score >= 8;
+    const ok = score >= 5;
+    const emoji = great ? '🎉' : ok ? '👍' : '💪';
+    const msg = great ? 'Excellent !' : ok ? 'Pas mal !' : 'Encore un effort !';
+    return (
+      <div className="max-w-md mx-auto px-5 py-6">
+        <button onClick={onBack} className="mb-4 px-3 py-2 rounded-full text-sm clic-press"
+          style={{ background: C.white, color: C.ink, fontWeight: 700,
+                   boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
+          ← Retour aux jeux
+        </button>
+        <div className="rounded-3xl p-6 text-center"
+             style={{ background: C.mint, boxShadow: '0 6px 0 rgba(0,0,0,0.08)' }}>
+          <div className="text-6xl mb-3">
+            <span className="clic-celebrate">{emoji}</span>
+          </div>
+          <h3 className="text-2xl mb-3"
+              style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+            {msg}
+          </h3>
+          <div className="text-5xl mb-2"
+               style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+            {score} / {total}
+          </div>
+          <div className="text-sm mb-5" style={{ color: C.inkLight, fontWeight: 600 }}>
+            Niveau {level}
+          </div>
+          <button onClick={restart} className="px-5 py-3 rounded-2xl clic-press"
+            style={{ background: C.accentPink, color: C.white,
+                     fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                     boxShadow: '0 4px 0 rgba(0,0,0,0.10)' }}>
+            🔄 Recommencer
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ÉCRAN en cours
+  const q = questions[currentIdx];
+  if (!q) return null;
+  return (
+    <div className="max-w-md mx-auto px-5 py-6">
+      <button onClick={onBack} className="mb-4 px-3 py-2 rounded-full text-sm clic-press"
+        style={{ background: C.white, color: C.ink, fontWeight: 700,
+                 boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
+        ← Abandonner
+      </button>
+
+      {/* Barre de progression + score */}
+      <div className="rounded-2xl p-3 mb-3 flex items-center justify-between"
+           style={{ background: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
+        <div className="text-sm" style={{ color: C.inkSoft, fontWeight: 700 }}>
+          Question {currentIdx + 1} / {questions.length}
+        </div>
+        <div className="text-lg" style={{ fontFamily: '"Fredoka", sans-serif',
+                                            fontWeight: 700, color: C.ink }}>
+          ⭐ {score}
+        </div>
+      </div>
+
+      {/* La question */}
+      <div className="rounded-3xl p-8 mb-4 text-center"
+           style={{ background: C.cream, boxShadow: '0 4px 0 rgba(0,0,0,0.08)' }}>
+        <div style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                      color: C.ink, fontSize: '3rem', lineHeight: 1.1 }}>
+          {q.a} {q.op} {q.b} = ?
+        </div>
+      </div>
+
+      {/* 4 boutons QCM */}
+      <div className="grid grid-cols-2 gap-3">
+        {q.choices.map((c, i) => {
+          const isWrong = wrongTap === c;
+          return (
+            <button key={i} onClick={() => tapAnswer(c)}
+              className="rounded-2xl p-5 clic-press"
+              style={{
+                background: isWrong ? '#FFD0D0' : C.white,
+                color: C.ink,
+                fontFamily: '"Fredoka", sans-serif',
+                fontWeight: 700, fontSize: '1.6rem',
+                boxShadow: isWrong ? '0 3px 0 rgba(200,0,0,0.2)' : '0 4px 0 rgba(0,0,0,0.08)',
+                transition: 'background 0.2s',
+              }}>
+              {c}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// JEU 6 — GÉO QUIZ (drapeaux & capitales)
+// ============================================================
+// Données : countries.json (195 pays), filtrées via GEO_CURATED_CODES
+// pour ne garder que ~60 pays bien connus pour des enfants 6-10 ans.
+//
+// Helper : flagEmoji('fr') → 🇫🇷. Marche pour tous les ISO 2 lettres.
+// Le drapeau emoji est dérivé du code à la volée (pas stocké).
+// ============================================================
+
+// Codes ISO des pays "raisonnablement connus" pour francophones 6-10 ans.
+// Source : sous-ensemble curé de countries.json. Si tu veux étendre, ajoute
+// des codes ici. Pas besoin de toucher countries.json (qui reste la source
+// complète des 195 pays).
+const GEO_CURATED_CODES = new Set([
+  // Europe
+  'fr','es','it','de','gb','pt','be','ch','nl','gr',
+  'pl','ie','se','no','dk','fi','at','ro','cz','hu',
+  // Afrique
+  'ma','dz','tn','eg','sn','ci','cm','za','ng','ke','gh','ml',
+  // Amériques
+  'us','ca','mx','br','ar','cl','co','pe','ve','cu','ht','jm',
+  // Asie
+  'jp','cn','in','kr','th','vn','id','sa','ae','tr','ir','iq',
+  // Océanie
+  'au','nz','fj',
+]);
+
+// Renvoie l'emoji drapeau d'un code ISO 2 lettres
+function flagEmoji(code) {
+  if (!code || code.length !== 2) return '🏳️';
+  const A = 0x1F1E6;  // 🇦 regional indicator A
+  return String.fromCodePoint(A + code.charCodeAt(0) - 97)
+       + String.fromCodePoint(A + code.charCodeAt(1) - 97);
+}
+
+// Liste curée, prête à l'emploi
+const GEO_COUNTRIES = COUNTRIES_JSON.filter(c => GEO_CURATED_CODES.has(c.code));
+
+// Génère 10 questions, mélangeant drapeau→pays et capitale→pays
+function makeGeoQuestions(count = 10) {
+  const pool = [...GEO_COUNTRIES];
+  // Mélange + pioche unique
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  const picked = pool.slice(0, count);
+  return picked.map((country, i) => {
+    // Alterne entre 2 types de questions
+    const type = i % 2 === 0 ? 'flag' : 'capital';
+    return makeOneGeoQuestion(country, type, pool);
+  });
+}
+
+function makeOneGeoQuestion(country, type, allCountries) {
+  // 3 leurres tirés de allCountries, jamais le pays cible
+  const decoyPool = allCountries.filter(c => c.code !== country.code);
+  // Shuffle léger et prend 3
+  const decoys = [];
+  const seenCodes = new Set([country.code]);
+  while (decoys.length < 3 && decoys.length < decoyPool.length) {
+    const cand = decoyPool[Math.floor(Math.random() * decoyPool.length)];
+    if (!seenCodes.has(cand.code)) {
+      decoys.push(cand);
+      seenCodes.add(cand.code);
+    }
+  }
+
+  if (type === 'flag') {
+    // Question : "Quel pays a ce drapeau ?" + drapeau emoji
+    // Réponse : nom du pays. Leurres = noms des autres pays.
+    const choices = [...decoys.map(d => d.name), country.name]
+                    .sort(() => Math.random() - 0.5);
+    return {
+      type: 'flag',
+      prompt: flagEmoji(country.code),  // gros emoji drapeau
+      promptLabel: 'Quel pays a ce drapeau ?',
+      answer: country.name,
+      choices,
+    };
+  } else {
+    // Question : "Quelle est la capitale de X ?"
+    // Réponse : capitale. Leurres = capitales des autres pays.
+    const choices = [...decoys.map(d => d.capital), country.capital]
+                    .sort(() => Math.random() - 0.5);
+    return {
+      type: 'capital',
+      prompt: country.name,
+      promptLabel: 'Quelle est la capitale de…',
+      answer: country.capital,
+      choices,
+    };
+  }
+}
+
+// ============================================================
+// GÉO QUIZ SOLO
+// ============================================================
+function GeoQuizSolo({ onBack }) {
+  const [phase, setPhase] = useState('ready');  // 'ready' | 'playing' | 'done'
+  const [questions, setQuestions] = useState([]);
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const [score, setScore] = useState(0);
+  const [wrongTap, setWrongTap] = useState(null);
+
+  useEffect(() => {
+    if (wrongTap == null) return;
+    const t = setTimeout(() => setWrongTap(null), 400);
+    return () => clearTimeout(t);
+  }, [wrongTap]);
+
+  const startGame = () => {
+    setQuestions(makeGeoQuestions(10));
+    setCurrentIdx(0);
+    setScore(0);
+    setPhase('playing');
+  };
+
+  const tapAnswer = (choice) => {
+    const q = questions[currentIdx];
+    if (!q) return;
+    if (choice !== q.answer) {
+      setWrongTap(choice);
+      playSound('pop');
+      vibrate(30);
+      return;
+    }
+    playSound('pop');
+    vibrate(50);
+    const nextIdx = currentIdx + 1;
+    setScore(s => s + 1);
+    if (nextIdx >= questions.length) {
+      setPhase('done');
+      launchConfetti();
+    } else {
+      setCurrentIdx(nextIdx);
+    }
+  };
+
+  const restart = () => {
+    setPhase('ready');
+    setQuestions([]);
+    setCurrentIdx(0);
+    setScore(0);
+  };
+
+  // ÉCRAN intro (avant la 1ère question)
+  if (phase === 'ready') {
+    return (
+      <div className="max-w-md mx-auto px-5 py-6">
+        <button onClick={onBack} className="mb-4 px-3 py-2 rounded-full text-sm clic-press"
+          style={{ background: C.white, color: C.ink, fontWeight: 700,
+                   boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
+          ← Retour
+        </button>
+        <div className="rounded-3xl p-6 text-center"
+             style={{ background: C.lavender, boxShadow: '0 6px 0 rgba(0,0,0,0.08)' }}>
+          <div className="text-6xl mb-3">🌍</div>
+          <h3 className="text-2xl mb-2"
+              style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+            Géo Quiz — Solo
+          </h3>
+          <p className="text-sm mb-5" style={{ color: C.inkLight, fontWeight: 600 }}>
+            10 questions sur les drapeaux et capitales du monde.
+          </p>
+          <button onClick={startGame} className="px-6 py-3 rounded-2xl clic-press"
+            style={{ background: C.accentPink, color: C.white,
+                     fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                     fontSize: '1.05rem',
+                     boxShadow: '0 4px 0 rgba(0,0,0,0.10)' }}>
+            🚀 C'est parti !
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ÉCRAN fin de partie
+  if (phase === 'done') {
+    const total = questions.length;
+    const great = score >= 8;
+    const ok = score >= 5;
+    const emoji = great ? '🎉' : ok ? '👍' : '💪';
+    const msg = great ? 'Bravo, tu connais bien le monde !'
+              : ok    ? 'Pas mal, tu peux mieux faire !'
+              : 'Continue à explorer le monde !';
+    return (
+      <div className="max-w-md mx-auto px-5 py-6">
+        <button onClick={onBack} className="mb-4 px-3 py-2 rounded-full text-sm clic-press"
+          style={{ background: C.white, color: C.ink, fontWeight: 700,
+                   boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
+          ← Retour aux jeux
+        </button>
+        <div className="rounded-3xl p-6 text-center"
+             style={{ background: C.lavender, boxShadow: '0 6px 0 rgba(0,0,0,0.08)' }}>
+          <div className="text-6xl mb-3">
+            <span className="clic-celebrate">{emoji}</span>
+          </div>
+          <div className="text-5xl mb-2"
+               style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+            {score} / {total}
+          </div>
+          <p className="text-sm mb-5" style={{ color: C.inkLight, fontWeight: 600 }}>
+            {msg}
+          </p>
+          <button onClick={restart} className="px-5 py-3 rounded-2xl clic-press"
+            style={{ background: C.accentPink, color: C.white,
+                     fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                     boxShadow: '0 4px 0 rgba(0,0,0,0.10)' }}>
+            🔄 Recommencer
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ÉCRAN en cours
+  const q = questions[currentIdx];
+  if (!q) return null;
+  return (
+    <div className="max-w-md mx-auto px-5 py-6">
+      <button onClick={onBack} className="mb-4 px-3 py-2 rounded-full text-sm clic-press"
+        style={{ background: C.white, color: C.ink, fontWeight: 700,
+                 boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
+        ← Abandonner
+      </button>
+
+      {/* Progression + score */}
+      <div className="rounded-2xl p-3 mb-3 flex items-center justify-between"
+           style={{ background: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
+        <div className="text-sm" style={{ color: C.inkSoft, fontWeight: 700 }}>
+          Question {currentIdx + 1} / {questions.length}
+        </div>
+        <div className="text-lg" style={{ fontFamily: '"Fredoka", sans-serif',
+                                            fontWeight: 700, color: C.ink }}>
+          ⭐ {score}
+        </div>
+      </div>
+
+      {/* Le prompt (drapeau géant ou nom du pays) + label */}
+      <div className="rounded-3xl p-6 mb-4 text-center"
+           style={{ background: C.cream, boxShadow: '0 4px 0 rgba(0,0,0,0.08)' }}>
+        <div className="text-sm mb-2" style={{ color: C.inkSoft, fontWeight: 700 }}>
+          {q.promptLabel}
+        </div>
+        <div style={{
+          fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+          color: C.ink,
+          fontSize: q.type === 'flag' ? '5rem' : '1.8rem',
+          lineHeight: 1.1,
+        }}>
+          {q.prompt}
+        </div>
+      </div>
+
+      {/* 4 boutons réponses (en 1 colonne car les noms sont longs) */}
+      <div className="flex flex-col gap-3">
+        {q.choices.map((c, i) => {
+          const isWrong = wrongTap === c;
+          return (
+            <button key={i} onClick={() => tapAnswer(c)}
+              className="rounded-2xl px-4 py-4 clic-press text-left"
+              style={{
+                background: isWrong ? '#FFD0D0' : C.white,
+                color: C.ink,
+                fontFamily: '"Fredoka", sans-serif',
+                fontWeight: 700, fontSize: '1.05rem',
+                boxShadow: isWrong ? '0 3px 0 rgba(200,0,0,0.2)' : '0 4px 0 rgba(0,0,0,0.08)',
+                transition: 'background 0.2s',
+              }}>
+              {c}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 
 function Hangman({ wrongCount }) {
   const inkColor = C.ink; const bodyColor = '#FF8FB1';
