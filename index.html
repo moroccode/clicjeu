@@ -2,28 +2,37 @@
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <link rel="apple-touch-icon" href="/logo.svg" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
     <meta name="theme-color" content="#FF8FB1" />
-    <title>ClicJeu — 4 jeux pour 2 joueurs</title>
-    <meta name="description" content="Joue à 4 mini-jeux fun avec un ami : Tic Tac Toe, Puissance 4, Pendu, Échecs." />
+
+    <!-- PWA manifest : permet "Installer l'app" sur Android/Chrome desktop -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="ClicJeu" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+
+    <title>ClicJeu — 6 jeux pour 2 joueurs</title>
+    <meta name="description" content="Joue à 6 mini-jeux fun avec un ami : Tic Tac Toe, Puissance 4, Pendu, Échecs, Math Duel et Géo Quiz." />
 
     <!-- Carte de partage (WhatsApp, Facebook, etc.) -->
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://clicjeu.com/" />
-    <meta property="og:title" content="ClicJeu — 4 jeux pour 2 joueurs" />
-    <meta property="og:description" content="Joue à 4 mini-jeux fun avec un ami : Tic Tac Toe, Puissance 4, Pendu, Échecs." />
+    <meta property="og:title" content="ClicJeu — 6 jeux pour 2 joueurs" />
+    <meta property="og:description" content="Joue à 6 mini-jeux fun avec un ami : Tic Tac Toe, Puissance 4, Pendu, Échecs, Math Duel et Géo Quiz." />
     <meta property="og:image" content="https://clicjeu.com/logo.svg" />
 
     <meta property="og:image" content="/og-image.png" />
     <meta property="og:title" content="ClicJeu — Jeux pour enfants" />
     <meta property="og:description" content="Tic Tac Toe, Puissance 4, Pendu et Échecs entre copains !" />
-    
+
     <!-- Carte de partage Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="ClicJeu — 4 jeux pour 2 joueurs" />
-    <meta name="twitter:description" content="Joue à 4 mini-jeux fun avec un ami." />
+    <meta name="twitter:title" content="ClicJeu — 6 jeux pour 2 joueurs" />
+    <meta name="twitter:description" content="Joue à 6 mini-jeux fun avec un ami." />
     <meta name="twitter:image" content="https://clicjeu.com/logo.svg" />
 
     <style>
@@ -31,24 +40,20 @@
          Anti-fausse-manip pour les enfants
          ============================================================ */
       html, body {
-        /* Désactive le pull-to-refresh d'Android Chrome
-           (le geste de tirer vers le bas pour recharger la page) */
+        /* Désactive le pull-to-refresh d'Android Chrome */
         overscroll-behavior-y: contain;
         overscroll-behavior-x: contain;
         /* Pas de zoom involontaire au double-tap */
         touch-action: manipulation;
-        /* Pas de sélection de texte par appui long → pas de menu contextuel
-           qui s'ouvre quand un enfant garde le doigt appuyé */
+        /* Pas de sélection de texte par appui long */
         -webkit-user-select: none;
         user-select: none;
         -webkit-tap-highlight-color: transparent;
-        /* Pas de bounce iOS quand on dépasse en haut/bas */
         overflow-x: hidden;
         position: relative;
         min-height: 100vh;
         min-height: 100dvh;
       }
-      /* Les inputs gardent la sélection (sinon on ne peut plus rien taper) */
       input, textarea {
         -webkit-user-select: text;
         user-select: text;
@@ -58,5 +63,17 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
+
+    <!-- Enregistrement du Service Worker pour PWA installability.
+         Ignoré en dev (localhost) pour ne pas interférer avec Vite. -->
+    <script>
+      if ('serviceWorker' in navigator && !location.hostname.includes('localhost')) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch((err) => {
+            console.warn('SW registration failed:', err);
+          });
+        });
+      }
+    </script>
   </body>
 </html>
