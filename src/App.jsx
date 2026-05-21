@@ -2517,7 +2517,15 @@ function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
                       incomingInvites = [], onAcceptInvite, onIgnoreInvite,
                       toast = null,
                       installInfo = null, onInstallClick = null }) {
-  const ids = Object.keys(GAMES);
+  // Ordre des cartes : les jeux jouables en solo en premier (priorité de
+  // visibilité), suivis des jeux multi-uniquement. Tant qu'on n'a pas d'IA
+  // pour TTT/C4/Pendu/Échecs, ça permet aux enfants seuls de repérer
+  // immédiatement ce qui est jouable sans ami connecté.
+  const ids = Object.keys(GAMES).sort((a, b) => {
+    const aSolo = GAMES[a].hasSoloMode ? 0 : 1;
+    const bSolo = GAMES[b].hasSoloMode ? 0 : 1;
+    return aSolo - bSolo;
+  });
   const onlineIds = usePresence();
 
   // Liste des amis actuellement en ligne (pour l'avatar bar)
@@ -2725,6 +2733,24 @@ function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
               <div className="absolute -right-3 -bottom-3 opacity-30"
                    style={{ fontSize: '7rem', lineHeight: 1 }}>
                 {g.headerEmoji}
+              </div>
+
+              {/* Badge mode (coin haut droit) : solo-capable ou multi-only.
+                  Aide les enfants/parents à voir d'un coup d'œil ce qui
+                  est jouable seul. */}
+              <div className="absolute top-3 right-3"
+                   style={{
+                     background: g.hasSoloMode ? '#D4F5C9' : C.white,
+                     color: g.hasSoloMode ? '#2D7A2D' : C.inkSoft,
+                     fontFamily: '"Fredoka", sans-serif',
+                     fontWeight: 700,
+                     fontSize: '0.7rem',
+                     padding: '4px 10px',
+                     borderRadius: 999,
+                     boxShadow: '0 2px 0 rgba(0,0,0,0.06)',
+                     letterSpacing: 0.2,
+                   }}>
+                {g.hasSoloMode ? '🎯 Aussi solo' : '👥 À 2'}
               </div>
 
               {/* Contenu de la carte */}
