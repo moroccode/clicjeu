@@ -12,9 +12,6 @@ import { Chessboard } from 'react-chessboard';
 import { tap, playSound, vibrate, launchConfetti,
          isSoundOn, setSoundOn, isVibrationOn, setVibrationOn } from './effects';
 import WORDS_JSON from './words.json';
-supabase.auth.onAuthStateChange((event, session) => {
-  console.log('[AUTH]', event, session ? 'YES' : 'NO', new Date().toLocaleTimeString());
-});
 
 // ============================================================
 // CLICJEU v6 — Auth pseudo + PIN BRANCHÉE SUR SUPABASE
