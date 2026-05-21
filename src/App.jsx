@@ -1037,7 +1037,7 @@ const GAMES = {
     ],
   },
   geo: {
-    title: 'Géo Quiz', cardEmoji: '🌍🇫🇷', headerEmoji: '🌍',
+    title: 'Géo Quiz', cardEmoji: '🌍🌎', headerEmoji: '🌍',
     bg: C.lavender, tagline: 'Drapeaux & capitales',
     objective: 'Reconnais drapeaux et capitales — solo ou contre un ami.',
     hasSoloMode: true,  // unique jeu avec mode solo en V1

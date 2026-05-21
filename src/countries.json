@@ -3,331 +3,331 @@
     "code": "af",
     "name": "Afghanistan",
     "capital": "Kaboul",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "dz",
     "name": "Algérie",
     "capital": "Alger",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "ao",
     "name": "Angola",
     "capital": "Luanda",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "bj",
     "name": "Bénin",
     "capital": "Porto-Novo",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "bw",
     "name": "Botswana",
     "capital": "Gaborone",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "bf",
     "name": "Burkina Faso",
     "capital": "Ouagadougou",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "bi",
     "name": "Burundi",
     "capital": "Gitega",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "cv",
     "name": "Cap-Vert",
     "capital": "Praia",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "cm",
     "name": "Cameroun",
     "capital": "Yaoundé",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "cf",
     "name": "République centrafricaine",
     "capital": "Bangui",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "td",
     "name": "Tchad",
     "capital": "N'Djaména",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "km",
     "name": "Comores",
     "capital": "Moroni",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "cd",
     "name": "RD Congo",
     "capital": "Kinshasa",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "cg",
     "name": "République du Congo",
     "capital": "Brazzaville",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "ci",
     "name": "Côte d'Ivoire",
     "capital": "Yamoussoukro",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "dj",
     "name": "Djibouti",
     "capital": "Djibouti",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "eg",
     "name": "Égypte",
     "capital": "Le Caire",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "gq",
     "name": "Guinée équatoriale",
     "capital": "Malabo",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "er",
     "name": "Érythrée",
     "capital": "Asmara",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "sz",
     "name": "Eswatini",
     "capital": "Mbabane",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "et",
     "name": "Éthiopie",
     "capital": "Addis-Abeba",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "ga",
     "name": "Gabon",
     "capital": "Libreville",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "gm",
     "name": "Gambie",
     "capital": "Banjul",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "gh",
     "name": "Ghana",
     "capital": "Accra",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "gn",
     "name": "Guinée",
     "capital": "Conakry",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "gw",
     "name": "Guinée-Bissau",
     "capital": "Bissau",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "ke",
     "name": "Kenya",
     "capital": "Nairobi",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "ls",
     "name": "Lesotho",
     "capital": "Maseru",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "lr",
     "name": "Libéria",
     "capital": "Monrovia",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "ly",
     "name": "Libye",
     "capital": "Tripoli",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "mg",
     "name": "Madagascar",
     "capital": "Antananarivo",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "mw",
     "name": "Malawi",
     "capital": "Lilongwe",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "ml",
     "name": "Mali",
     "capital": "Bamako",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "mr",
     "name": "Mauritanie",
     "capital": "Nouakchott",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "mu",
     "name": "Maurice",
     "capital": "Port-Louis",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "ma",
     "name": "Maroc",
     "capital": "Rabat",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "mz",
     "name": "Mozambique",
     "capital": "Maputo",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "na",
     "name": "Namibie",
     "capital": "Windhoek",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "ne",
     "name": "Niger",
     "capital": "Niamey",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "ng",
     "name": "Nigéria",
     "capital": "Abuja",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "rw",
     "name": "Rwanda",
     "capital": "Kigali",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "st",
     "name": "São Tomé-et-Príncipe",
     "capital": "São Tomé",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "sn",
     "name": "Sénégal",
     "capital": "Dakar",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "sc",
     "name": "Seychelles",
     "capital": "Victoria",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "sl",
     "name": "Sierra Leone",
     "capital": "Freetown",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "so",
     "name": "Somalie",
     "capital": "Mogadiscio",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "za",
     "name": "Afrique du Sud",
     "capital": "Pretoria",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "ss",
     "name": "Soudan du Sud",
     "capital": "Djouba",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "sd",
     "name": "Soudan",
     "capital": "Khartoum",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "tz",
     "name": "Tanzanie",
     "capital": "Dodoma",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "tg",
     "name": "Togo",
     "capital": "Lomé",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "tn",
     "name": "Tunisie",
     "capital": "Tunis",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "ug",
     "name": "Ouganda",
     "capital": "Kampala",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "zm",
     "name": "Zambie",
     "capital": "Lusaka",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "zw",
     "name": "Zimbabwe",
     "capital": "Harare",
-    "zone": "Africa"
+    "zone": "Afrique"
   },
   {
     "code": "al",
@@ -597,565 +597,565 @@
     "code": "am",
     "name": "Arménie",
     "capital": "Erevan",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "az",
     "name": "Azerbaïdjan",
     "capital": "Bakou",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "bh",
     "name": "Bahreïn",
     "capital": "Manama",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "bd",
     "name": "Bangladesh",
     "capital": "Dacca",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "bt",
     "name": "Bhoutan",
     "capital": "Thimphou",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "bn",
     "name": "Brunei",
     "capital": "Bandar Seri Begawan",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "kh",
     "name": "Cambodge",
     "capital": "Phnom Penh",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "cn",
     "name": "Chine",
     "capital": "Pékin",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "ge",
     "name": "Géorgie",
     "capital": "Tbilissi",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "in",
     "name": "Inde",
     "capital": "New Delhi",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "id",
     "name": "Indonésie",
     "capital": "Jakarta",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "ir",
     "name": "Iran",
     "capital": "Téhéran",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "iq",
     "name": "Irak",
     "capital": "Bagdad",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "il",
     "name": "Israël",
     "capital": "Jérusalem",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "jp",
     "name": "Japon",
     "capital": "Tokyo",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "jo",
     "name": "Jordanie",
     "capital": "Amman",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "kz",
     "name": "Kazakhstan",
     "capital": "Astana",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "kw",
     "name": "Koweït",
     "capital": "Koweït",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "kg",
     "name": "Kirghizistan",
     "capital": "Bichkek",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "la",
     "name": "Laos",
     "capital": "Vientiane",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "lb",
     "name": "Liban",
     "capital": "Beyrouth",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "my",
     "name": "Malaisie",
     "capital": "Kuala Lumpur",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "mv",
     "name": "Maldives",
     "capital": "Malé",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "mn",
     "name": "Mongolie",
     "capital": "Oulan-Bator",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "mm",
     "name": "Myanmar",
     "capital": "Naypyidaw",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "np",
     "name": "Népal",
     "capital": "Katmandou",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "kp",
     "name": "Corée du Nord",
     "capital": "Pyongyang",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "om",
     "name": "Oman",
     "capital": "Mascate",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "pk",
     "name": "Pakistan",
     "capital": "Islamabad",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "ph",
     "name": "Philippines",
     "capital": "Manille",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "qa",
     "name": "Qatar",
     "capital": "Doha",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "sa",
     "name": "Arabie Saoudite",
     "capital": "Riyad",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "sg",
     "name": "Singapour",
     "capital": "Singapour",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "kr",
     "name": "Corée du Sud",
     "capital": "Séoul",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "lk",
     "name": "Sri Lanka",
     "capital": "Sri Jayawardenepura Kotte",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "sy",
     "name": "Syrie",
     "capital": "Damas",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "tj",
     "name": "Tadjikistan",
     "capital": "Douchanbé",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "th",
     "name": "Thaïlande",
     "capital": "Bangkok",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "tl",
     "name": "Timor oriental",
     "capital": "Dili",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "tr",
     "name": "Turquie",
     "capital": "Ankara",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "tm",
     "name": "Turkménistan",
     "capital": "Achgabat",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "ae",
     "name": "Émirats arabes unis",
     "capital": "Abou Dabi",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "uz",
     "name": "Ouzbékistan",
     "capital": "Tachkent",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "vn",
     "name": "Vietnam",
     "capital": "Hanoï",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "ye",
     "name": "Yémen",
     "capital": "Sanaa",
-    "zone": "Asia"
+    "zone": "Asie"
   },
   {
     "code": "ag",
     "name": "Antigua-et-Barbuda",
     "capital": "Saint John's",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "bs",
     "name": "Bahamas",
     "capital": "Nassau",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "bb",
     "name": "Barbade",
     "capital": "Bridgetown",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "bz",
     "name": "Belize",
     "capital": "Belmopan",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "ca",
     "name": "Canada",
     "capital": "Ottawa",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "cr",
     "name": "Costa Rica",
     "capital": "San José",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "cu",
     "name": "Cuba",
     "capital": "La Havane",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "dm",
     "name": "Dominique",
     "capital": "Roseau",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "do",
     "name": "Rép. dominicaine",
     "capital": "Saint-Domingue",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "sv",
     "name": "Salvador",
     "capital": "San Salvador",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "gd",
     "name": "Grenade",
     "capital": "Saint-Georges",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "gt",
     "name": "Guatemala",
     "capital": "Guatemala",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "ht",
     "name": "Haïti",
     "capital": "Port-au-Prince",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "hn",
     "name": "Honduras",
     "capital": "Tegucigalpa",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "jm",
     "name": "Jamaïque",
     "capital": "Kingston",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "mx",
     "name": "Mexique",
     "capital": "Mexico",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "ni",
     "name": "Nicaragua",
     "capital": "Managua",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "pa",
     "name": "Panama",
     "capital": "Panama",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "kn",
     "name": "Saint-Kitts-et-Nevis",
     "capital": "Basseterre",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "lc",
     "name": "Sainte-Lucie",
     "capital": "Castries",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "vc",
     "name": "Saint-Vincent",
     "capital": "Kingstown",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "tt",
     "name": "Trinité-et-Tobago",
     "capital": "Port-d'Espagne",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "us",
     "name": "États-Unis",
     "capital": "Washington",
-    "zone": "North America"
+    "zone": "Amérique du Nord"
   },
   {
     "code": "ar",
     "name": "Argentine",
     "capital": "Buenos Aires",
-    "zone": "South America"
+    "zone": "Amérique du Sud"
   },
   {
     "code": "bo",
     "name": "Bolivie",
     "capital": "Sucre",
-    "zone": "South America"
+    "zone": "Amérique du Sud"
   },
   {
     "code": "br",
     "name": "Brésil",
     "capital": "Brasília",
-    "zone": "South America"
+    "zone": "Amérique du Sud"
   },
   {
     "code": "cl",
     "name": "Chili",
     "capital": "Santiago",
-    "zone": "South America"
+    "zone": "Amérique du Sud"
   },
   {
     "code": "co",
     "name": "Colombie",
     "capital": "Bogota",
-    "zone": "South America"
+    "zone": "Amérique du Sud"
   },
   {
     "code": "ec",
     "name": "Équateur",
     "capital": "Quito",
-    "zone": "South America"
+    "zone": "Amérique du Sud"
   },
   {
     "code": "gy",
     "name": "Guyana",
     "capital": "Georgetown",
-    "zone": "South America"
+    "zone": "Amérique du Sud"
   },
   {
     "code": "py",
     "name": "Paraguay",
     "capital": "Asuncion",
-    "zone": "South America"
+    "zone": "Amérique du Sud"
   },
   {
     "code": "pe",
     "name": "Pérou",
     "capital": "Lima",
-    "zone": "South America"
+    "zone": "Amérique du Sud"
   },
   {
     "code": "sr",
     "name": "Suriname",
     "capital": "Paramaribo",
-    "zone": "South America"
+    "zone": "Amérique du Sud"
   },
   {
     "code": "uy",
     "name": "Uruguay",
     "capital": "Montevideo",
-    "zone": "South America"
+    "zone": "Amérique du Sud"
   },
   {
     "code": "ve",
     "name": "Venezuela",
     "capital": "Caracas",
-    "zone": "South America"
+    "zone": "Amérique du Sud"
   },
   {
     "code": "au",
     "name": "Australie",
     "capital": "Canberra",
-    "zone": "Oceania"
+    "zone": "Océanie"
   },
   {
     "code": "fj",
     "name": "Fidji",
     "capital": "Suva",
-    "zone": "Oceania"
+    "zone": "Océanie"
   },
   {
     "code": "ki",
     "name": "Kiribati",
     "capital": "Tarawa",
-    "zone": "Oceania"
+    "zone": "Océanie"
   },
   {
     "code": "mh",
     "name": "Îles Marshall",
     "capital": "Majuro",
-    "zone": "Oceania"
+    "zone": "Océanie"
   },
   {
     "code": "fm",
     "name": "Micronésie",
     "capital": "Palikir",
-    "zone": "Oceania"
+    "zone": "Océanie"
   },
   {
     "code": "nr",
     "name": "Nauru",
     "capital": "Yaren",
-    "zone": "Oceania"
+    "zone": "Océanie"
   },
   {
     "code": "nz",
     "name": "Nouvelle-Zélande",
     "capital": "Wellington",
-    "zone": "Oceania"
+    "zone": "Océanie"
   },
   {
     "code": "pw",
     "name": "Palaos",
     "capital": "Ngerulmud",
-    "zone": "Oceania"
+    "zone": "Océanie"
   },
   {
     "code": "pg",
     "name": "Papouasie-N.-Guinée",
     "capital": "Port Moresby",
-    "zone": "Oceania"
+    "zone": "Océanie"
   },
   {
     "code": "ws",
     "name": "Samoa",
     "capital": "Apia",
-    "zone": "Oceania"
+    "zone": "Océanie"
   },
   {
     "code": "sb",
     "name": "Îles Salomon",
     "capital": "Honiara",
-    "zone": "Oceania"
+    "zone": "Océanie"
   },
   {
     "code": "to",
     "name": "Tonga",
     "capital": "Nuku'alofa",
-    "zone": "Oceania"
+    "zone": "Océanie"
   },
   {
     "code": "tv",
     "name": "Tuvalu",
     "capital": "Funafuti",
-    "zone": "Oceania"
+    "zone": "Océanie"
   },
   {
     "code": "vu",
     "name": "Vanuatu",
     "capital": "Port-Vila",
-    "zone": "Oceania"
+    "zone": "Océanie"
   },
   {
     "code": "va",
@@ -1167,6 +1167,6 @@
     "code": "ps",
     "name": "Palestine",
     "capital": "Ramallah",
-    "zone": "Asia"
+    "zone": "Asie"
   }
 ]
