@@ -1061,6 +1061,18 @@ function GameHub({ profile, onLogout, onEditAvatar }) {
   const [showFriends, setShowFriends]   = useState(false);
   const [creatingRoom, setCreatingRoom] = useState(false);
 
+  // PWA install — détection + état du bandeau
+  const install = useInstallPrompt();
+  const [showIOSHelp, setShowIOSHelp] = useState(false);
+  // Helper : déclenche le bon flow selon le type (natif ou iOS)
+  const handleInstallClick = () => {
+    if (install.installType === 'native') {
+      install.promptNativeInstall();
+    } else if (install.installType === 'ios') {
+      setShowIOSHelp(true);
+    }
+  };
+
   // UNE seule room active à la fois
   const [activeRoom, setActiveRoom]   = useState(null);
 
@@ -1411,6 +1423,8 @@ function GameHub({ profile, onLogout, onEditAvatar }) {
           playSound('pop');
         }}
         toast={toast}
+        installInfo={install}
+        onInstallClick={handleInstallClick}
       />
     );
   };
@@ -1439,6 +1453,7 @@ function GameHub({ profile, onLogout, onEditAvatar }) {
         onAcceptInvite={acceptIncoming}
         hasActiveRoom={!!activeRoom}
       />
+      {showIOSHelp && <IOSInstallModal onClose={() => setShowIOSHelp(false)} />}
     </>
   );
 }
@@ -2211,7 +2226,219 @@ function IncomingInvitesBanner({ invites, onAccept, onIgnore }) {
 // au-dessus de "Salut Pseudo"). Cliquable → dropdown avec
 // "Changer mon avatar" et "Se déconnecter".
 // ============================================================
-function AvatarCard({ profile, onEditAvatar, onLogout }) {
+// ============================================================
+// INSTALL PROMPT — détection PWA installable + bandeau "Installer l'app"
+// ============================================================
+// 3 cas possibles :
+//   1. Chrome Android / desktop : l'API beforeinstallprompt déclenche
+//      un dialog natif d'installation (1 tap = installé)
+//   2. iOS Safari : pas d'API. On affiche une popup expliquant
+//      "Partage → Sur l'écran d'accueil"
+//   3. Déjà installé (display-mode: standalone) : on cache tout
+//
+// L'utilisateur peut fermer le bandeau (stocké en LocalStorage), mais
+// l'option reste disponible dans le menu profil (carte avatar centrée).
+// ============================================================
+function useInstallPrompt() {
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [isStandalone, setIsStandalone] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
+  const [bannerDismissed, setBannerDismissed] = useState(() => {
+    try { return localStorage.getItem('cj_install_dismissed') === '1'; }
+    catch { return false; }
+  });
+
+  useEffect(() => {
+    // Mode standalone = app déjà installée
+    const standalone = (window.matchMedia
+                        && window.matchMedia('(display-mode: standalone)').matches)
+                    || window.navigator.standalone === true;
+    setIsStandalone(standalone);
+
+    // iOS Safari : pas d'API beforeinstallprompt
+    const ua = window.navigator.userAgent;
+    const iOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+    setIsIOS(iOS);
+
+    // Capture l'événement d'install (Android/desktop)
+    const handler = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+
+    // Si l'app est installée pendant la session
+    const installedHandler = () => {
+      setDeferredPrompt(null);
+      setIsStandalone(true);
+    };
+    window.addEventListener('appinstalled', installedHandler);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handler);
+      window.removeEventListener('appinstalled', installedHandler);
+    };
+  }, []);
+
+  const installType = isStandalone
+    ? 'installed'
+    : deferredPrompt
+      ? 'native'
+      : isIOS
+        ? 'ios'
+        : 'unavailable';
+
+  const promptNativeInstall = async () => {
+    if (!deferredPrompt) return false;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    setDeferredPrompt(null);
+    return outcome === 'accepted';
+  };
+
+  const dismissBanner = () => {
+    try { localStorage.setItem('cj_install_dismissed', '1'); }
+    catch {}
+    setBannerDismissed(true);
+  };
+
+  // Bandeau : actionnable ET pas fermé
+  const shouldShowBanner = (installType === 'native' || installType === 'ios')
+                            && !bannerDismissed;
+  // Menu profil : tant que c'est installable (même si bandeau fermé)
+  const canShowInMenu = installType === 'native' || installType === 'ios';
+
+  return {
+    installType,
+    promptNativeInstall,
+    shouldShowBanner,
+    canShowInMenu,
+    dismissBanner,
+  };
+}
+
+// Bandeau "Installer l'app" tout en haut de la home
+function InstallBanner({ installType, onInstall, onDismiss }) {
+  if (installType !== 'native' && installType !== 'ios') return null;
+
+  const isNative = installType === 'native';
+  return (
+    <div className="rounded-2xl p-3 mb-3 flex items-center gap-3"
+         style={{ background: C.mint, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
+      <div className="text-3xl">📱</div>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm"
+             style={{ color: C.ink, fontWeight: 700,
+                      fontFamily: '"Fredoka", sans-serif' }}>
+          Installer ClicJeu
+        </div>
+        <div className="text-xs" style={{ color: C.inkLight, fontWeight: 600 }}>
+          {isNative ? 'Ajoute l\'app à ton téléphone'
+                    : 'Ajoute l\'app à ton écran d\'accueil'}
+        </div>
+      </div>
+      <button onClick={() => { tap(); onInstall(); }}
+        className="text-xs px-3 py-2 rounded-full clic-press"
+        style={{ background: C.accentPink, color: C.white,
+                 fontWeight: 700, fontFamily: '"Fredoka", sans-serif',
+                 boxShadow: '0 2px 0 rgba(0,0,0,0.08)' }}>
+        {isNative ? 'Installer' : 'Comment ?'}
+      </button>
+      <button onClick={() => { tap(); onDismiss(); }}
+        aria-label="Fermer"
+        className="text-2xl clic-press leading-none"
+        style={{ color: C.inkSoft, fontWeight: 700, padding: '0 4px' }}>
+        ×
+      </button>
+    </div>
+  );
+}
+
+// Modal iOS : instructions pour ajouter à l'écran d'accueil
+function IOSInstallModal({ onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center"
+         style={{ background: 'rgba(0,0,0,0.5)' }}
+         onClick={onClose}>
+      <div className="w-full max-w-md mx-auto p-5 clic-fade-in"
+           onClick={(e) => e.stopPropagation()}
+           style={{
+             background: C.white,
+             borderTopLeftRadius: 24, borderTopRightRadius: 24,
+             paddingBottom: 'calc(20px + env(safe-area-inset-bottom))',
+           }}>
+        <div className="text-center mb-4">
+          <div className="text-5xl mb-2">📱</div>
+          <h3 className="text-2xl mb-1"
+              style={{ fontFamily: '"Fredoka", sans-serif',
+                       fontWeight: 700, color: C.ink }}>
+            Installer ClicJeu
+          </h3>
+          <p className="text-sm" style={{ color: C.inkLight, fontWeight: 600 }}>
+            Suis ces 3 étapes :
+          </p>
+        </div>
+
+        <div className="space-y-3 mb-5">
+          <div className="flex items-center gap-3 p-3 rounded-2xl"
+               style={{ background: C.peach }}>
+            <div className="text-2xl" style={{
+              background: C.white, borderRadius: '50%', width: 36, height: 36,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink,
+              fontSize: '1.1rem',
+            }}>1</div>
+            <div className="flex-1 text-sm"
+                 style={{ color: C.ink, fontWeight: 600 }}>
+              Tape sur l'icône <span style={{ fontWeight: 800 }}>Partage</span> en bas de Safari
+              <span className="ml-1" style={{ fontSize: '1.3rem' }}>⬆️</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 p-3 rounded-2xl"
+               style={{ background: C.cream }}>
+            <div className="text-2xl" style={{
+              background: C.white, borderRadius: '50%', width: 36, height: 36,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink,
+              fontSize: '1.1rem',
+            }}>2</div>
+            <div className="flex-1 text-sm"
+                 style={{ color: C.ink, fontWeight: 600 }}>
+              Fais défiler et tape <span style={{ fontWeight: 800 }}>"Sur l'écran d'accueil"</span> 📲
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 p-3 rounded-2xl"
+               style={{ background: C.mint }}>
+            <div className="text-2xl" style={{
+              background: C.white, borderRadius: '50%', width: 36, height: 36,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink,
+              fontSize: '1.1rem',
+            }}>3</div>
+            <div className="flex-1 text-sm"
+                 style={{ color: C.ink, fontWeight: 600 }}>
+              Tape <span style={{ fontWeight: 800 }}>"Ajouter"</span> en haut à droite ✨
+            </div>
+          </div>
+        </div>
+
+        <button onClick={onClose}
+          className="w-full py-3 rounded-2xl clic-press"
+          style={{ background: C.accentPink, color: C.white,
+                   fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                   fontSize: '1.05rem',
+                   boxShadow: '0 4px 0 rgba(0,0,0,0.10)' }}>
+          Compris !
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+function AvatarCard({ profile, onEditAvatar, onLogout, onInstall, canInstall }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -2265,6 +2492,13 @@ function AvatarCard({ profile, onEditAvatar, onLogout }) {
               🎨 Changer mon avatar
             </button>
           )}
+          {canInstall && onInstall && (
+            <button onClick={() => { setOpen(false); onInstall(); }}
+              className="w-full text-left px-3 py-3 rounded-xl text-sm clic-press"
+              style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+              📱 Installer l'app
+            </button>
+          )}
           <div style={{ height: 1, background: C.cream, margin: '4px 8px' }} />
           <button onClick={() => { setOpen(false); onLogout(); }}
             className="w-full text-left px-3 py-3 rounded-xl text-sm clic-press"
@@ -2281,7 +2515,8 @@ function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
                       pendingFriendRequests = 0, friends = [],
                       onQuickInvite,
                       incomingInvites = [], onAcceptInvite, onIgnoreInvite,
-                      toast = null }) {
+                      toast = null,
+                      installInfo = null, onInstallClick = null }) {
   const ids = Object.keys(GAMES);
   const onlineIds = usePresence();
 
@@ -2310,6 +2545,17 @@ function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
       <ProfileBar profile={profile} onLogout={onLogout}
                   onOpenFriends={onOpenFriends} pendingFriends={pendingFriendRequests}
                   onEditAvatar={onEditAvatar} />
+
+      {/* Bandeau "Installer l'app" — visible quand PWA installable et pas
+          encore fermé par l'utilisateur. Géré côté GameHub via le hook
+          useInstallPrompt. */}
+      {installInfo?.shouldShowBanner && (
+        <InstallBanner
+          installType={installInfo.installType}
+          onInstall={onInstallClick}
+          onDismiss={installInfo.dismissBanner}
+        />
+      )}
 
       {/* Toast (timeout, erreur, etc.) */}
       {toast && (
@@ -2355,7 +2601,9 @@ function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
       )}
 
       {/* Carte avatar centrée (remplace l'ancien gros logo) */}
-      <AvatarCard profile={profile} onEditAvatar={onEditAvatar} onLogout={onLogout} />
+      <AvatarCard profile={profile} onEditAvatar={onEditAvatar} onLogout={onLogout}
+                  canInstall={!!installInfo?.canShowInMenu}
+                  onInstall={onInstallClick} />
 
       {/* Actions sociales : 2 boutons côte à côte, toujours visibles
           (pas de flicker au montage : on n'attend pas friendCount pour rendre).
