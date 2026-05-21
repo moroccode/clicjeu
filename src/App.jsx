@@ -1057,6 +1057,7 @@ const GAMES = {
 function GameHub({ profile, onLogout, onEditAvatar }) {
   // Navigation
   const [selectedGame, setSelectedGame] = useState(null);
+  const [soloGame, setSoloGame]         = useState(null);  // 'math' | 'geo' | null
   const [showFriends, setShowFriends]   = useState(false);
   const [creatingRoom, setCreatingRoom] = useState(false);
 
@@ -1273,7 +1274,7 @@ function GameHub({ profile, onLogout, onEditAvatar }) {
 
   // Helpers
   const backToGames = () => {
-    setSelectedGame(null);
+    setSelectedGame(null); setSoloGame(null);
     setShowFriends(false); setActiveRoom(null); setCreatingRoom(false);
   };
 
@@ -1359,14 +1360,29 @@ function GameHub({ profile, onLogout, onEditAvatar }) {
         </LobbyErrorBoundary>
       );
     }
+    // Mode solo : aucun appel à Supabase, pas de room. Écran 100% local.
+    if (soloGame === 'math') {
+      return <MathDuelSolo onBack={() => setSoloGame(null)} />;
+    }
+    if (soloGame === 'geo') {
+      return <GeoQuizSolo onBack={() => setSoloGame(null)} />;
+    }
     if (selectedGame) {
       // Tous les jeux sont online uniquement. Tap sur un jeu → écran invitation.
+      // Si le jeu a un mode solo (hasSoloMode), l'écran proposera aussi
+      // le solo (en fallback si aucun ami n'est en ligne, ou en lien
+      // discret sinon).
       return <InviteToPlayScreen
         profile={profile}
         gameId={selectedGame}
         onBack={() => setSelectedGame(null)}
         onInviteFriend={async (friend) => {
           await createOnlineRoom(selectedGame, friend.id);
+        }}
+        onStartSolo={() => {
+          const g = selectedGame;
+          setSelectedGame(null);
+          setSoloGame(g);
         }}
       />;
     }
@@ -2645,7 +2661,7 @@ function InviteFriendsPanel({ room, profile, onRoomUpdate }) {
 // INVITE TO PLAY SCREEN — choisir un ami pour jouer
 // (après "En ligne", avant la création de la room)
 // ============================================================
-function InviteToPlayScreen({ profile, gameId, onBack, onInviteFriend }) {
+function InviteToPlayScreen({ profile, gameId, onBack, onInviteFriend, onStartSolo }) {
   const g = GAMES[gameId];
   const [friends, setFriends] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2664,6 +2680,15 @@ function InviteToPlayScreen({ profile, gameId, onBack, onInviteFriend }) {
       return aOn - bOn;
     });
   }, [friends, onlineIds]);
+
+  // Combien d'amis en ligne ? Sert à décider si on highlight le solo
+  const onlineFriendCount = useMemo(
+    () => friends.filter(f => onlineIds.has(f.id)).length,
+    [friends, onlineIds]
+  );
+  const showSolo = !!(g.hasSoloMode && onStartSolo);
+  // Si solo dispo ET personne en ligne → on met le solo en avant
+  const soloProminent = showSolo && onlineFriendCount === 0;
 
   const shareApp = async () => {
     const url = `https://clicjeu.com/?ref=${encodeURIComponent(profile.pseudo)}`;
@@ -2697,13 +2722,36 @@ function InviteToPlayScreen({ profile, gameId, onBack, onInviteFriend }) {
         <div className="text-5xl mb-2">{g.cardEmoji}</div>
         <h2 className="text-2xl"
             style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
-          {g.title} en ligne
+          {g.title}
         </h2>
       </div>
 
+      {/* CTA solo PROMINENT — quand aucun ami n'est en ligne */}
+      {soloProminent && (
+        <div className="rounded-3xl p-5 mb-5 text-center"
+             style={{ background: C.mint, boxShadow: '0 6px 0 rgba(0,0,0,0.08)' }}>
+          <div className="text-4xl mb-2">🎯</div>
+          <h3 className="text-lg mb-2"
+              style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+            Aucun ami en ligne pour le moment
+          </h3>
+          <p className="text-xs mb-4" style={{ color: C.inkLight, fontWeight: 600 }}>
+            Tu peux jouer en solo en attendant !
+          </p>
+          <button onClick={() => { tap(); onStartSolo(); }}
+            className="w-full py-3 rounded-2xl clic-press"
+            style={{ background: C.accentPink, color: C.white,
+                     fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                     fontSize: '1.05rem',
+                     boxShadow: '0 4px 0 rgba(0,0,0,0.10)' }}>
+            🚀 Jouer en solo
+          </button>
+        </div>
+      )}
+
       <h3 className="text-base mb-3 text-center"
           style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
-        Qui veux-tu inviter ? 🎮
+        {soloProminent ? 'Ou invite un ami 🎮' : 'Qui veux-tu inviter ? 🎮'}
       </h3>
 
       {/* Liste d'amis */}
@@ -2779,6 +2827,17 @@ function InviteToPlayScreen({ profile, gameId, onBack, onInviteFriend }) {
           Partage le lien à un proche. Une fois inscrit, il deviendra ton ami.
         </p>
       </div>
+
+      {/* Lien solo discret — quand solo dispo mais des amis sont en ligne */}
+      {showSolo && !soloProminent && (
+        <button onClick={() => { tap(); onStartSolo(); }}
+          className="mt-4 mx-auto block text-sm clic-press px-4 py-2 rounded-full"
+          style={{ color: C.inkSoft, fontWeight: 700,
+                   background: 'rgba(255,255,255,0.6)',
+                   fontFamily: '"Fredoka", sans-serif' }}>
+          🎯 Ou jouer en solo
+        </button>
+      )}
     </div>
   );
 }
@@ -2971,6 +3030,7 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onC
           case 'pendu':    return <PenduOnline     {...gameProps} />;
           case 'echecs':   return <EchecsOnline    {...gameProps} />;
           case 'math':     return <MathDuelOnline  {...gameProps} />;
+          case 'geo':      return <GeoQuizOnline   {...gameProps} />;
           default:
             return (
               <div className="rounded-2xl p-4 text-center" style={{
@@ -4340,6 +4400,277 @@ function MathDuelOnline({ room, profile, player1, player2, onUpdate, onChangeGam
     </div>
   );
 }
+
+// ============================================================
+// JEU 6 — GÉO QUIZ ONLINE (multi)
+// ============================================================
+// Même mécanique que MathDuelOnline : 10 questions, simultané, 1er à
+// toucher la bonne réponse marque. Pas de niveau (un seul "niveau" en V1,
+// avec les ~60 pays curés via GEO_CURATED_CODES).
+//
+// Différence avec MathDuelOnline : pas d'écran "level-select". Au montage,
+// l'hôte appuie sur "Commencer la partie" pour générer les 10 questions
+// (qui sont ensuite poussées dans state, donc identiques pour les 2
+// joueurs).
+// ============================================================
+
+function makeGeoState() {
+  return {
+    phase: 'ready',      // 'ready' | 'playing' | 'done'
+    questions: [],
+    currentIdx: 0,
+    scores: [0, 0],
+    lastTapBy: null,
+    round: 1,
+  };
+}
+
+function GeoQuizOnline({ room, profile, player1, player2, onUpdate, onChangeGame }) {
+  const myIndex = room.player1_id === profile.id ? 0 : 1;
+  const isHost = myIndex === 0;
+  const players = [player1, player2];
+
+  const state = (room.state && room.state.phase) ? room.state : makeGeoState();
+  const { phase, questions, currentIdx, scores } = state;
+
+  // Feedback visuel local (mauvaise réponse)
+  const [wrongTap, setWrongTap] = useState(null);
+  useEffect(() => {
+    if (wrongTap == null) return;
+    const t = setTimeout(() => setWrongTap(null), 400);
+    return () => clearTimeout(t);
+  }, [wrongTap]);
+
+  // Effets de fin de partie
+  const finalWinner = phase === 'done'
+    ? (scores[0] > scores[1] ? 0 : scores[1] > scores[0] ? 1 : 'draw')
+    : null;
+  useGameEndEffects(finalWinner, finalWinner === myIndex);
+
+  // === Démarrer la partie (hôte) ===
+  const startGame = async () => {
+    if (!isHost) return;
+    const newState = {
+      ...state,
+      phase: 'playing',
+      questions: makeGeoQuestions(10),
+      currentIdx: 0,
+      scores: [0, 0],
+    };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
+
+  // === Un joueur tape une réponse ===
+  const tapAnswer = async (choice) => {
+    if (phase !== 'playing') return;
+    const q = questions[currentIdx];
+    if (!q) return;
+    if (choice !== q.answer) {
+      setWrongTap(choice);
+      playSound('pop');
+      vibrate(30);
+      return;
+    }
+    playSound('pop');
+    vibrate(50);
+    const newScores = [...scores];
+    newScores[myIndex] += 1;
+    const nextIdx = currentIdx + 1;
+    const newState = {
+      ...state,
+      scores: newScores,
+      currentIdx: nextIdx,
+      lastTapBy: myIndex,
+      phase: nextIdx >= questions.length ? 'done' : 'playing',
+    };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
+
+  // === Revanche (host) ===
+  const newGame = async () => {
+    if (!isHost) return;
+    const newState = {
+      ...makeGeoState(),
+      phase: 'playing',
+      questions: makeGeoQuestions(10),
+      round: (state.round || 1) + 1,
+    };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
+
+  // === ÉCRAN 1 : "Commencer" pour l'hôte, "En attente" pour l'invité ===
+  if (phase === 'ready') {
+    if (isHost) {
+      return (
+        <div className="rounded-3xl p-6 text-center"
+             style={{ background: C.lavender, boxShadow: '0 6px 0 rgba(0,0,0,0.08)' }}>
+          <div className="text-6xl mb-3">🌍</div>
+          <h3 className="text-2xl mb-2"
+              style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+            Géo Quiz
+          </h3>
+          <p className="text-sm mb-5" style={{ color: C.inkLight, fontWeight: 600 }}>
+            10 questions sur les drapeaux et capitales du monde.
+            <br />Le 1er à toucher la bonne réponse marque !
+          </p>
+          <button onClick={startGame} className="px-6 py-3 rounded-2xl clic-press"
+            style={{ background: C.accentPink, color: C.white,
+                     fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                     fontSize: '1.05rem',
+                     boxShadow: '0 4px 0 rgba(0,0,0,0.10)' }}>
+            🚀 Commencer la partie
+          </button>
+        </div>
+      );
+    } else {
+      return (
+        <div className="rounded-3xl p-8 text-center"
+             style={{ background: C.lavender, boxShadow: '0 6px 0 rgba(0,0,0,0.08)' }}>
+          <div className="text-6xl mb-3">⏳</div>
+          <h3 className="text-2xl mb-2"
+              style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+            En attente...
+          </h3>
+          <p style={{ color: C.inkLight, fontWeight: 600 }}>
+            {players[0]?.pseudo || 'L\'hôte'} lance la partie.
+          </p>
+        </div>
+      );
+    }
+  }
+
+  // === ÉCRAN 2 : résultat final ===
+  if (phase === 'done') {
+    const isDraw = finalWinner === 'draw';
+    const isMyWin = finalWinner === myIndex;
+    const opponentForChange = isHost ? players[1] : players[0];
+    return (
+      <div className="rounded-3xl p-6 text-center" style={{
+        background: isDraw ? C.lavender : (isMyWin ? C.mint : C.pink),
+        boxShadow: '0 6px 0 rgba(0,0,0,0.08)',
+      }}>
+        <div className="text-6xl mb-3">
+          <span className="clic-celebrate">{isDraw ? '🤝' : (isMyWin ? '🎉' : '😢')}</span>
+        </div>
+        <h3 className="text-3xl mb-3"
+            style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+          {isDraw ? 'Égalité !' : `${players[finalWinner]?.pseudo || 'Joueur'} gagne !`}
+        </h3>
+        <div className="flex items-center justify-around mb-4">
+          <div className="text-center">
+            <div className="text-2xl mb-1">{players[0]?.avatar || '👤'}</div>
+            <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 600 }}>
+              {players[0]?.pseudo || 'Hôte'}
+            </div>
+            <div className="text-3xl" style={{ fontFamily: '"Fredoka", sans-serif',
+                                                 fontWeight: 700, color: C.ink }}>
+              {scores[0]}
+            </div>
+          </div>
+          <div className="text-2xl" style={{ color: C.inkSoft }}>vs</div>
+          <div className="text-center">
+            <div className="text-2xl mb-1">{players[1]?.avatar || '👤'}</div>
+            <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 600 }}>
+              {players[1]?.pseudo || 'Invité'}
+            </div>
+            <div className="text-3xl" style={{ fontFamily: '"Fredoka", sans-serif',
+                                                 fontWeight: 700, color: C.ink }}>
+              {scores[1]}
+            </div>
+          </div>
+        </div>
+        {isHost ? (
+          <EndGameActions
+            onRematch={newGame}
+            onChangeGame={onChangeGame}
+            opponentName={opponentForChange?.pseudo}
+          />
+        ) : (
+          <div className="text-sm" style={{ color: C.inkLight, fontWeight: 600 }}>
+            ⏳ {players[0]?.pseudo || 'L\'hôte'} va relancer...
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // === ÉCRAN 3 : jeu en cours ===
+  const q = questions[currentIdx];
+  if (!q) return null;
+
+  return (
+    <div>
+      {/* Score live */}
+      <div className="rounded-2xl p-3 mb-3 flex items-center justify-around"
+           style={{ background: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
+        <div className="text-center">
+          <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 700 }}>
+            {players[0]?.pseudo || 'Hôte'}
+          </div>
+          <div className="text-2xl" style={{ fontFamily: '"Fredoka", sans-serif',
+                                               fontWeight: 700,
+                                               color: myIndex === 0 ? C.accentPink : C.ink }}>
+            {scores[0]}
+          </div>
+        </div>
+        <div className="text-sm" style={{ color: C.ink, fontWeight: 700 }}>
+          {currentIdx + 1} / {questions.length}
+        </div>
+        <div className="text-center">
+          <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 700 }}>
+            {players[1]?.pseudo || 'Invité'}
+          </div>
+          <div className="text-2xl" style={{ fontFamily: '"Fredoka", sans-serif',
+                                               fontWeight: 700,
+                                               color: myIndex === 1 ? C.accentPink : C.ink }}>
+            {scores[1]}
+          </div>
+        </div>
+      </div>
+
+      {/* Prompt (drapeau géant ou nom de pays) */}
+      <div className="rounded-3xl p-6 mb-4 text-center"
+           style={{ background: C.cream, boxShadow: '0 4px 0 rgba(0,0,0,0.08)' }}>
+        <div className="text-sm mb-2" style={{ color: C.inkSoft, fontWeight: 700 }}>
+          {q.promptLabel}
+        </div>
+        <div style={{
+          fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+          color: C.ink,
+          fontSize: q.type === 'flag' ? '5rem' : '1.8rem',
+          lineHeight: 1.1,
+        }}>
+          {q.prompt}
+        </div>
+      </div>
+
+      {/* 4 réponses en colonne */}
+      <div className="flex flex-col gap-3">
+        {q.choices.map((c, i) => {
+          const isWrong = wrongTap === c;
+          return (
+            <button key={i} onClick={() => tapAnswer(c)}
+              className="rounded-2xl px-4 py-4 clic-press text-left"
+              style={{
+                background: isWrong ? '#FFD0D0' : C.white,
+                color: C.ink,
+                fontFamily: '"Fredoka", sans-serif',
+                fontWeight: 700, fontSize: '1.05rem',
+                boxShadow: isWrong ? '0 3px 0 rgba(200,0,0,0.2)' : '0 4px 0 rgba(0,0,0,0.08)',
+                transition: 'background 0.2s',
+              }}>
+              {c}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 
 // ============================================================
 // JEU 5 SOLO — MATH DUEL en mode entraînement
