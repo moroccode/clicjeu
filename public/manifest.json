@@ -1,0 +1,26 @@
+{
+  "name": "ClicJeu",
+  "short_name": "ClicJeu",
+  "description": "6 jeux pour 2 joueurs : Tic Tac Toe, Puissance 4, Pendu, Échecs, Math Duel, Géo Quiz.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FFF5F5",
+  "theme_color": "#FF8FB1",
+  "lang": "fr",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
