@@ -266,9 +266,17 @@ function toastEmit(toast) {
 
 function GlobalToastHost({ onAcceptInvite, hasActiveRoom }) {
   const [toasts, setToasts] = useState([]);  // queue de toasts visibles
+  // Ref pour lire hasActiveRoom à jour dans le handler d'événement
+  const hasActiveRoomRef = useRef(hasActiveRoom);
+  useEffect(() => { hasActiveRoomRef.current = hasActiveRoom; }, [hasActiveRoom]);
 
   useEffect(() => {
     const handler = (toast) => {
+      // Les invitations sont déjà affichées par <IncomingInvitesBanner> (avec
+      // avatar) sur l'écran d'accueil. Pour éviter le DOUBLON, on n'affiche le
+      // toast d'invitation QUE lorsqu'on est dans une partie (hasActiveRoom),
+      // car le banner d'accueil n'y est pas visible.
+      if (toast.kind === 'invite' && !hasActiveRoomRef.current) return;
       // 1 seul toast à la fois pour ne pas surcharger l'écran d'un enfant.
       // Si déjà un toast affiché, on remplace par le nouveau (le récent prime).
       setToasts([toast]);
@@ -1194,6 +1202,15 @@ function GameHub({ profile, onLogout, onEditAvatar }) {
           cjLog(`👁️ settle: session=${session ? 'YES' : 'NO'}`);
           if (!session) return;
         } catch { return; }
+
+        // Si la présence a été coupée par un pagehide (mise en arrière-plan),
+        // on la relance. startPresence est idempotent : sans coupure
+        // préalable, cet appel ne fait rien. Avec coupure, il rétablit le
+        // channel et notre statut "busy" si on est en partie.
+        if (profile?.id) {
+          startPresence(profile.id);
+          setBusy(!!activeRoomRef.current?.id);
+        }
 
         listIncomingInvitations().then(setIncomingInvites).catch(() => {});
         listPendingRequests().then((l) => setPendingFriendRequests(l.length)).catch(() => {});
@@ -3206,11 +3223,18 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onC
   // Wrappers autour de onLeave : on broadcaste AVANT de partir
   const handleLeave = async () => {
     await broadcastLeave();
+    // On libère immédiatement le statut "occupé" pour que les amis voient
+    // le point repasser au vert sans attendre que le state React se propage.
+    try { setBusy(false); } catch {}
     if (onLeave) onLeave();
   };
 
   return (
-    <div className="max-w-md mx-auto px-5 py-8">
+    <div className="max-w-md mx-auto px-5 py-8"
+         style={{ paddingBottom: ready ? 'calc(88px + env(safe-area-inset-bottom))' : undefined }}>
+      {/* paddingBottom quand on joue : laisse de la place pour le bouton
+          flottant "Réagir" (fixed bas-droite) afin qu'il ne recouvre pas
+          le dernier élément du jeu (ex: la barre d'indice aux échecs). */}
       {/* Bandeau "l'adversaire est parti" — bloque le jeu et propose de sortir */}
       {opponentLeft && ready && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
