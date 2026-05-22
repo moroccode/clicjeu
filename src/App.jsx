@@ -741,8 +741,11 @@ function PinInput({ value, onChange, autoFocus = false }) {
 
 // --- AuthScreen : page unique avec toggle ---
 function AuthScreen({ onSignup, onLogin, pendingRef = null }) {
-  // Si on arrive depuis un lien de parrainage, on bascule par défaut sur "Inscription"
-  const [mode, setMode] = useState('signup');
+  // Par défaut on montre la Connexion (cas le plus fréquent : un habitué qui
+  // revient). Le bouton Inscription reste visible juste à côté pour les
+  // nouveaux. Exception : si on arrive via un lien d'invitation (pendingRef),
+  // c'est sûrement un nouveau → on bascule par défaut sur Inscription.
+  const [mode, setMode] = useState(pendingRef ? 'signup' : 'login');
   const [pseudo, setPseudo] = useState('');
   const [pin, setPin] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -824,12 +827,12 @@ function AuthScreen({ onSignup, onLogin, pendingRef = null }) {
         <button onClick={() => switchMode('signup')}
           className="flex-1 py-3 rounded-full text-sm transition-all clic-press"
           style={{
-            background: mode === 'signup' ? C.accentPink : 'transparent',
-            color: mode === 'signup' ? C.white : C.inkLight,
+            background: mode === 'signup' ? C.accentPink : C.peach,
+            color: mode === 'signup' ? C.white : C.ink,
             fontWeight: 700,
             fontFamily: '"Fredoka", sans-serif',
           }}>
-          Inscription
+          {mode === 'signup' ? 'Inscription' : '✨ Inscription'}
         </button>
       </div>
 
@@ -1064,10 +1067,15 @@ function GameHub({ profile, onLogout, onEditAvatar }) {
   // PWA install — détection + état du bandeau
   const install = useInstallPrompt();
   const [showIOSHelp, setShowIOSHelp] = useState(false);
-  // Helper : déclenche le bon flow selon le type (natif ou iOS)
+  const [showAndroidHelp, setShowAndroidHelp] = useState(false);
+  // Helper : déclenche le bon flow selon le type
+  // - native (Android Chrome / desktop) : montre la modal explicative
+  //   d'abord (pour prévenir des éventuels warnings Play Protect),
+  //   puis lance le prompt natif si l'utilisateur confirme
+  // - ios : montre les instructions manuelles
   const handleInstallClick = () => {
     if (install.installType === 'native') {
-      install.promptNativeInstall();
+      setShowAndroidHelp(true);
     } else if (install.installType === 'ios') {
       setShowIOSHelp(true);
     }
@@ -1454,6 +1462,15 @@ function GameHub({ profile, onLogout, onEditAvatar }) {
         hasActiveRoom={!!activeRoom}
       />
       {showIOSHelp && <IOSInstallModal onClose={() => setShowIOSHelp(false)} />}
+      {showAndroidHelp && (
+        <AndroidInstallModal
+          onClose={() => setShowAndroidHelp(false)}
+          onConfirm={() => {
+            setShowAndroidHelp(false);
+            install.promptNativeInstall();
+          }}
+        />
+      )}
     </>
   );
 }
@@ -2243,10 +2260,11 @@ function useInstallPrompt() {
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [isStandalone, setIsStandalone] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
-  const [bannerDismissed, setBannerDismissed] = useState(() => {
-    try { return localStorage.getItem('cj_install_dismissed') === '1'; }
-    catch { return false; }
-  });
+  // Le "dismiss" est volontairement NON persistant : à chaque nouvelle
+  // session (rechargement / reconnexion), le bandeau réapparaît tant que
+  // l'app n'est pas installée. Si l'utilisateur ferme le bandeau, c'est
+  // juste pour la session en cours.
+  const [bannerDismissed, setBannerDismissed] = useState(false);
 
   useEffect(() => {
     // Mode standalone = app déjà installée
@@ -2297,8 +2315,7 @@ function useInstallPrompt() {
   };
 
   const dismissBanner = () => {
-    try { localStorage.setItem('cj_install_dismissed', '1'); }
-    catch {}
+    // Pas de persistance : le bandeau reviendra à la prochaine session.
     setBannerDismissed(true);
   };
 
@@ -2350,6 +2367,67 @@ function InstallBanner({ installType, onInstall, onDismiss }) {
         style={{ color: C.inkSoft, fontWeight: 700, padding: '0 4px' }}>
         ×
       </button>
+    </div>
+  );
+}
+
+// Modal Android : prévient avant install native que Play Protect peut
+// afficher un avertissement (cas du WebAPK avec targetSdk obsolète).
+// L'utilisateur clique "Installer" puis le navigateur fait le reste.
+function AndroidInstallModal({ onConfirm, onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center"
+         style={{ background: 'rgba(0,0,0,0.5)' }}
+         onClick={onClose}>
+      <div className="w-full max-w-md mx-auto p-5 clic-fade-in"
+           onClick={(e) => e.stopPropagation()}
+           style={{
+             background: C.white,
+             borderTopLeftRadius: 24, borderTopRightRadius: 24,
+             paddingBottom: 'calc(20px + env(safe-area-inset-bottom))',
+           }}>
+        <div className="text-center mb-4">
+          <div className="text-5xl mb-2">📱</div>
+          <h3 className="text-2xl mb-1"
+              style={{ fontFamily: '"Fredoka", sans-serif',
+                       fontWeight: 700, color: C.ink }}>
+            Installer ClicJeu
+          </h3>
+          <p className="text-sm" style={{ color: C.inkLight, fontWeight: 600 }}>
+            En 1 tap, ClicJeu sera ajouté à ton téléphone comme une vraie app.
+          </p>
+        </div>
+
+        {/* Note rassurante Play Protect */}
+        <div className="rounded-2xl p-3 mb-5 flex items-start gap-3"
+             style={{ background: C.cream }}>
+          <div className="text-2xl">💡</div>
+          <div className="text-xs"
+               style={{ color: C.ink, fontWeight: 600, lineHeight: 1.5 }}>
+            <strong>Si Android affiche un avertissement</strong> "Appli non
+            sécurisée" : tape simplement <strong>"Installer quand même"</strong>.
+            C'est un message générique d'Android, pas un problème de sécurité.
+            ClicJeu est juste un site web ajouté à ton écran d'accueil.
+          </div>
+        </div>
+
+        <div className="flex gap-3">
+          <button onClick={onClose}
+            className="flex-1 py-3 rounded-2xl clic-press"
+            style={{ background: C.cream, color: C.ink, fontWeight: 700,
+                     fontFamily: '"Fredoka", sans-serif',
+                     boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
+            Annuler
+          </button>
+          <button onClick={() => { tap(); onConfirm(); }}
+            className="flex-1 py-3 rounded-2xl clic-press"
+            style={{ background: C.accentPink, color: C.white,
+                     fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                     boxShadow: '0 4px 0 rgba(0,0,0,0.10)' }}>
+            Installer
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
