@@ -8,13 +8,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
     <meta name="theme-color" content="#FF8FB1" />
 
-    <!-- PWA manifest : permet "Installer l'app" sur Android/Chrome desktop -->
-    <link rel="manifest" href="/manifest.json" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-title" content="ClicJeu" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-
     <title>ClicJeu — 6 jeux pour 2 joueurs</title>
     <meta name="description" content="Joue à 6 mini-jeux fun avec un ami : Tic Tac Toe, Puissance 4, Pendu, Échecs, Math Duel et Géo Quiz." />
 
@@ -24,10 +17,6 @@
     <meta property="og:title" content="ClicJeu — 6 jeux pour 2 joueurs" />
     <meta property="og:description" content="Joue à 6 mini-jeux fun avec un ami : Tic Tac Toe, Puissance 4, Pendu, Échecs, Math Duel et Géo Quiz." />
     <meta property="og:image" content="https://clicjeu.com/logo.svg" />
-
-    <meta property="og:image" content="/og-image.png" />
-    <meta property="og:title" content="ClicJeu — Jeux pour enfants" />
-    <meta property="og:description" content="Tic Tac Toe, Puissance 4, Pendu et Échecs entre copains !" />
 
     <!-- Carte de partage Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
@@ -64,15 +53,19 @@
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
 
-    <!-- Enregistrement du Service Worker pour PWA installability.
-         Ignoré en dev (localhost) pour ne pas interférer avec Vite. -->
+    <!-- ============================================================
+         PWA temporairement désactivée.
+         Ce script DÉSENREGISTRE tout Service Worker déjà installé
+         chez les utilisateurs qui avaient visité le site quand le
+         PWA était actif. Sans ça, leur ancien SW continuerait de
+         tourner et de mettre en cache. À RETIRER quand on remettra
+         le PWA en place.
+         ============================================================ -->
     <script>
-      if ('serviceWorker' in navigator && !location.hostname.includes('localhost')) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').catch((err) => {
-            console.warn('SW registration failed:', err);
-          });
-        });
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then((regs) => {
+          regs.forEach((reg) => reg.unregister());
+        }).catch(() => {});
       }
     </script>
   </body>
