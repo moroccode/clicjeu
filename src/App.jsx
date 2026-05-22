@@ -4,7 +4,8 @@ import { signup as sbSignup, login as sbLogin, logout as sbLogout,
 import { createRoom, joinRoom, subscribeToRoom, getProfilesByIds, updateRoomState,
          listIncomingInvitations, subscribeToInvitations, cancelInvitation,
          updateRoomInvite, dismissInvitation, cleanupStaleWaitingRooms,
-         restoreActiveRoom, subscribeToReactions, sendReaction } from './rooms';
+         restoreActiveRoom, subscribeToReactions, sendReaction,
+         subscribeToGameSignals, sendGameSignal } from './rooms';
 import { searchUsers, sendFriendRequest, acceptFriendRequest, rejectFriendRequest,
          removeFriend, listFriends, listPendingRequests, listSentRequests, syncFriendships } from './friends';
 import { Chess } from 'chess.js';
@@ -1212,6 +1213,21 @@ function GameHub({ profile, onLogout, onEditAvatar }) {
       document.removeEventListener('visibilitychange', onVisible);
       if (settleTimer) clearTimeout(settleTimer);
     };
+  }, []);
+
+  // === Fermeture de l'appli (pagehide) : on libère la présence ===
+  // pagehide est plus fiable que beforeunload sur mobile. Quand l'utilisateur
+  // ferme l'onglet ou bascule l'appli en arrière-plan définitivement, on
+  // sort proprement du channel de présence pour que les autres voient tout
+  // de suite qu'on n'est plus là (au lieu d'attendre le timeout ~30s de
+  // Supabase, qui laissait le point 🟡 figé). Best-effort : si le navigateur
+  // tue l'onglet trop vite, le timeout serveur prendra le relais.
+  useEffect(() => {
+    const onPageHide = () => {
+      try { stopPresence(); } catch {}
+    };
+    window.addEventListener('pagehide', onPageHide);
+    return () => window.removeEventListener('pagehide', onPageHide);
   }, []);
 
   // === Bouton Retour Android (popstate) : on bloque les fausses manips ===
@@ -2974,20 +2990,32 @@ function ReactionLayer({ roomId, myIndex, players }) {
         </div>
       )}
 
-      {/* Bouton flottant 💬 */}
+      {/* Bouton flottant : plus parlant qu'une simple bulle 💬.
+          On affiche une étiquette "Réagir" à côté de l'icône pour que les
+          enfants comprennent tout de suite à quoi ça sert. */}
       <button onClick={() => { tap(); setOpen(v => !v); }}
         className="fixed z-40 clic-press"
-        aria-label="Réactions"
+        aria-label="Réagir"
         style={{
           right: 'calc(16px + env(safe-area-inset-right))',
           bottom: 'calc(16px + env(safe-area-inset-bottom))',
-          width: 56, height: 56, borderRadius: '50%',
-          background: open ? C.accentPink : C.white,
-          boxShadow: '0 4px 12px rgba(0,0,0,0.18)',
-          fontSize: '1.6rem',
+          height: 52, borderRadius: 999,
+          background: C.accentPink,
+          color: C.white,
+          boxShadow: '0 5px 16px rgba(255,143,177,0.5)',
+          fontSize: '1.1rem',
+          fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
+          gap: 8, padding: '0 18px',
         }}>
-        {open ? '✕' : '💬'}
+        {open ? (
+          <span style={{ fontSize: '1.3rem' }}>✕</span>
+        ) : (
+          <>
+            <span style={{ fontSize: '1.4rem' }}>😄</span>
+            <span>Réagir</span>
+          </>
+        )}
       </button>
 
       {/* Panneau réactions */}
@@ -3123,11 +3151,94 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onC
   const waiting = currentRoom.status === 'waiting';
   const ready   = currentRoom.status === 'playing' && player1 && player2;
 
+  // === DÉTECTION DU DÉPART DE L'ADVERSAIRE ===========================
+  // Deux mécanismes complémentaires :
+  //  1. Signal instantané : quand un joueur quitte volontairement, il
+  //     broadcaste { kind: 'left' } sur le channel de réactions. L'autre
+  //     le reçoit en ~100ms.
+  //  2. Filet de sécurité présence : si le joueur ferme brutalement l'appli
+  //     (crash, OS qui tue l'onglet), aucun signal n'est envoyé. On surveille
+  //     alors sa présence Realtime : s'il disparaît pendant >8s en pleine
+  //     partie, on considère qu'il est parti.
+  const onlineIds = usePresence();
+  const [opponentLeft, setOpponentLeft] = useState(false);
+  const leaveChannelRef = useRef(null);
+
+  // Qui est l'adversaire ?
+  const opponentId = currentRoom.player1_id === profile.id
+    ? currentRoom.player2_id
+    : currentRoom.player1_id;
+
+  // Mécanisme 1 : écoute le signal "left" sur le channel de signaux
+  useEffect(() => {
+    if (!ready || !currentRoom.id) return;
+    const sub = subscribeToGameSignals(currentRoom.id, (signal) => {
+      if (signal.kind === 'left' && signal.byId && signal.byId !== profile.id) {
+        setOpponentLeft(true);
+      }
+    });
+    leaveChannelRef.current = sub.channel;
+    return () => { sub.unsubscribe(); leaveChannelRef.current = null; };
+  }, [ready, currentRoom.id, profile.id]);
+
+  // Mécanisme 2 : filet présence — l'adversaire absent >8s = parti
+  useEffect(() => {
+    if (!ready || !opponentId) return;
+    let timer = null;
+    const present = onlineIds.has(opponentId);
+    if (!present) {
+      // On attend 8s avant de conclure (évite les faux positifs lors d'un
+      // simple changement d'onglet ou d'un micro-décrochage réseau)
+      timer = setTimeout(() => setOpponentLeft(true), 8000);
+    }
+    return () => { if (timer) clearTimeout(timer); };
+  }, [ready, opponentId, onlineIds]);
+
+  // Helper : prévenir l'adversaire qu'on part (signal instantané)
+  const broadcastLeave = async () => {
+    if (leaveChannelRef.current) {
+      await sendGameSignal(leaveChannelRef.current, {
+        kind: 'left', byId: profile.id,
+      });
+    }
+  };
+
+  // Wrappers autour de onLeave : on broadcaste AVANT de partir
+  const handleLeave = async () => {
+    await broadcastLeave();
+    if (onLeave) onLeave();
+  };
+
   return (
     <div className="max-w-md mx-auto px-5 py-8">
+      {/* Bandeau "l'adversaire est parti" — bloque le jeu et propose de sortir */}
+      {opponentLeft && ready && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+             style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="w-full max-w-sm rounded-3xl p-6 text-center clic-pop"
+               style={{ background: C.white, boxShadow: '0 10px 30px rgba(0,0,0,0.25)' }}>
+            <div className="text-5xl mb-3">😢</div>
+            <h3 className="text-xl mb-2"
+                style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+              {(opponentId && profiles[opponentId]?.pseudo) || 'Ton adversaire'} a quitté la partie
+            </h3>
+            <p className="text-sm mb-5" style={{ color: C.inkLight, fontWeight: 600 }}>
+              La partie est terminée. Tu peux revenir à l'accueil.
+            </p>
+            <button onClick={() => { tap(); if (onFinished) onFinished(); else if (onLeave) onLeave(); }}
+              className="w-full py-3 rounded-2xl clic-press"
+              style={{ background: C.accentPink, color: C.white,
+                       fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                       boxShadow: '0 4px 0 rgba(0,0,0,0.10)' }}>
+              🏠 Retour à l'accueil
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Barre de navigation : Quitter (= annuler la partie en attente) */}
       <div className="flex items-center justify-between mb-6">
-        <button onClick={onLeave} className="px-4 py-2 rounded-full text-sm clic-press"
+        <button onClick={handleLeave} className="px-4 py-2 rounded-full text-sm clic-press"
           style={{ background: C.white, color: C.ink, fontWeight: 700,
                    boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
           ← Quitter

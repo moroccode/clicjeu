@@ -329,6 +329,41 @@ export async function sendReaction(channel, reaction) {
 }
 
 // ============================================================
+// SIGNAUX DE PARTIE — channel distinct des réactions
+// ------------------------------------------------------------
+// Sert aux signaux "système" entre joueurs (ex: "j'ai quitté la partie").
+// On le sépare des réactions (emojis/phrases) pour éviter toute collision
+// d'abonnement et garder une sémantique claire.
+// ============================================================
+export function subscribeToGameSignals(roomId, callback) {
+  const channelName = `signals-${roomId}`;
+  const channel = supabase
+    .channel(channelName)
+    .on('broadcast', { event: 'signal' }, (payload) => {
+      callback(payload.payload);
+    })
+    .subscribe();
+
+  return {
+    channel,
+    unsubscribe: () => supabase.removeChannel(channel),
+  };
+}
+
+export async function sendGameSignal(channel, signal) {
+  if (!channel) return;
+  try {
+    await channel.send({
+      type: 'broadcast',
+      event: 'signal',
+      payload: signal,
+    });
+  } catch (e) {
+    // silencieux
+  }
+}
+
+// ============================================================
 // getProfilesByIds — Récupérer plusieurs profils en une fois
 // Utile pour afficher les pseudos des 2 joueurs
 // ============================================================
