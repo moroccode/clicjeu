@@ -3344,6 +3344,14 @@ function TicTacToeOnline({ room, profile, player1, player2, onUpdate, onChangeGa
   );
 }
 
+// Dimensions standard du Puissance 4 : 6 lignes × 7 colonnes.
+// BUG FIX : ces constantes étaient utilisées dans makeC4Board(),
+// checkConnect4Winner() et la logique de chute des pions, mais n'avaient
+// jamais été définies → ReferenceError: C4_ROWS is not defined → le
+// Puissance 4 plantait dès la création/acceptation d'une partie.
+const C4_ROWS = 6;
+const C4_COLS = 7;
+
 function makeC4Board() { return Array.from({ length: C4_ROWS }, () => Array(C4_COLS).fill(null)); }
 function checkConnect4Winner(grid) {
   const dirs = [[0,1],[1,0],[1,1],[1,-1]];
@@ -3501,6 +3509,17 @@ function Connect4Online({ room, profile, player1, player2, onUpdate, onChangeGam
     </div>
   );
 }
+
+// Position de départ standard des échecs. On la dérive directement de
+// chess.js (new Chess().fen()) plutôt que de la coder en dur, ce qui
+// garantit zéro risque de typo et une compatibilité parfaite avec la
+// version de chess.js utilisée.
+// BUG FIX : cette constante était référencée dans makeEchecsState() mais
+// n'avait jamais été définie → Reference: STARTING_FEN is not defined →
+// le composant Échecs plantait dès qu'une room sans state était ouverte
+// (c.-à-d. à chaque acceptation de partie, car la room est créée avec
+// initialState: {}).
+const STARTING_FEN = new Chess().fen();
 
 function makeEchecsState() {
   return {
