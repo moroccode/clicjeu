@@ -4,7 +4,7 @@ import { signup as sbSignup, login as sbLogin, logout as sbLogout,
 import { createRoom, joinRoom, subscribeToRoom, getProfilesByIds, updateRoomState,
          listIncomingInvitations, subscribeToInvitations, cancelInvitation,
          updateRoomInvite, dismissInvitation, cleanupStaleWaitingRooms,
-         restoreActiveRoom } from './rooms';
+         restoreActiveRoom, subscribeToReactions, sendReaction } from './rooms';
 import { searchUsers, sendFriendRequest, acceptFriendRequest, rejectFriendRequest,
          removeFriend, listFriends, listPendingRequests, listSentRequests, syncFriendships } from './friends';
 import { Chess } from 'chess.js';
@@ -127,10 +127,17 @@ function useGoogleFonts() {
         0%, 100% { opacity: 0.3; transform: translateY(0); }
         50%      { opacity: 1;   transform: translateY(-3px); }
       }
+      @keyframes clic-reaction-pop {
+        0%   { transform: scale(0.3); opacity: 0; }
+        20%  { transform: scale(1.15); opacity: 1; }
+        70%  { transform: scale(1); opacity: 1; }
+        100% { transform: scale(0.9); opacity: 0; }
+      }
       .clic-fade-in     { animation: clic-fade-in 0.35s ease-out; }
       .clic-pop         { animation: clic-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
       .clic-celebrate   { animation: clic-celebrate 0.8s ease-in-out infinite; display: inline-block; }
       .clic-shake       { animation: clic-shake 0.4s ease-in-out; }
+      .clic-reaction-pop{ animation: clic-reaction-pop 2.2s ease-in-out forwards; }
       .clic-press:active{ transform: scale(0.95); transition: transform 0.05s; }
       .cj-thinking      { display: inline-flex; gap: 2px; }
       .cj-thinking span { display: inline-block; animation: cj-thinking-dot 1s ease-in-out infinite; }
@@ -2871,6 +2878,172 @@ function InviteToPlayScreen({ profile, gameId, onBack, onInviteFriend, onStartSo
   );
 }
 
+// ============================================================
+// REACTION LAYER — communication légère entre joueurs
+// ------------------------------------------------------------
+// Affiché par-dessus n'importe quel jeu pendant une partie. Fournit :
+//   - un bouton flottant 💬 (bas-droite) qui ouvre un panneau
+//   - le panneau : 8 emojis réactions + 6 phrases pré-écrites
+//   - l'affichage animé d'une réaction reçue (gros emoji / bulle au centre)
+//   - un cooldown anti-spam de 2 secondes
+// Tout passe par un channel broadcast (éphémère), jamais par room.state,
+// pour ne pas interférer avec l'état du jeu.
+// ============================================================
+const REACTION_EMOJIS = ['👋', '😄', '😮', '👏', '😢', '🎉', '🤔', '❤️'];
+const REACTION_PHRASES = [
+  'Bien joué ! 👏',
+  'À toi de jouer 😊',
+  'Oups 😅',
+  'GG ! 🎉',
+  'Bonne chance ! 🍀',
+  'On rejoue ? 🔄',
+];
+const REACTION_COOLDOWN_MS = 2000;
+
+function ReactionLayer({ roomId, myIndex, players }) {
+  const [open, setOpen] = useState(false);
+  const [incoming, setIncoming] = useState(null);  // { kind, content, by, key }
+  const [cooldown, setCooldown] = useState(false);
+  const channelRef = useRef(null);
+  const incomingTimer = useRef(null);
+
+  // Abonnement au channel de réactions de la room
+  useEffect(() => {
+    if (!roomId) return;
+    const sub = subscribeToReactions(roomId, (reaction) => {
+      // On affiche TOUTES les réactions reçues, y compris... non : on ignore
+      // les siennes (elles sont déjà affichées localement à l'envoi).
+      if (reaction.by === myIndex) return;
+      showIncoming(reaction);
+    });
+    channelRef.current = sub.channel;
+    return () => {
+      sub.unsubscribe();
+      channelRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId, myIndex]);
+
+  const showIncoming = (reaction) => {
+    if (incomingTimer.current) clearTimeout(incomingTimer.current);
+    setIncoming({ ...reaction, key: Date.now() });
+    playSound('pop');
+    incomingTimer.current = setTimeout(() => setIncoming(null), 2200);
+  };
+
+  const send = async (kind, content) => {
+    if (cooldown) return;
+    const reaction = { kind, content, by: myIndex };
+    await sendReaction(channelRef.current, reaction);
+    // Affichage local immédiat (l'autre le verra via broadcast)
+    showIncoming({ ...reaction, by: myIndex });
+    setOpen(false);
+    // Cooldown anti-spam
+    setCooldown(true);
+    setTimeout(() => setCooldown(false), REACTION_COOLDOWN_MS);
+  };
+
+  const senderName = (by) => players[by]?.pseudo || (by === 0 ? 'Hôte' : 'Invité');
+
+  return (
+    <>
+      {/* Réaction reçue / envoyée : overlay animé au centre */}
+      {incoming && (
+        <div key={incoming.key}
+             className="fixed inset-0 z-40 flex items-center justify-center pointer-events-none">
+          <div className="clic-reaction-pop text-center">
+            {incoming.kind === 'phrase' ? (
+              <div className="px-5 py-3 rounded-3xl mx-4"
+                   style={{ background: C.white, boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+                            maxWidth: 320 }}>
+                <div className="text-xs mb-1" style={{ color: C.inkSoft, fontWeight: 700 }}>
+                  {senderName(incoming.by)}
+                </div>
+                <div style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                              color: C.ink, fontSize: '1.3rem' }}>
+                  {incoming.content}
+                </div>
+              </div>
+            ) : (
+              <div style={{ fontSize: '6rem', lineHeight: 1,
+                            filter: 'drop-shadow(0 6px 12px rgba(0,0,0,0.2))' }}>
+                {incoming.content}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Bouton flottant 💬 */}
+      <button onClick={() => { tap(); setOpen(v => !v); }}
+        className="fixed z-40 clic-press"
+        aria-label="Réactions"
+        style={{
+          right: 'calc(16px + env(safe-area-inset-right))',
+          bottom: 'calc(16px + env(safe-area-inset-bottom))',
+          width: 56, height: 56, borderRadius: '50%',
+          background: open ? C.accentPink : C.white,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.18)',
+          fontSize: '1.6rem',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+        {open ? '✕' : '💬'}
+      </button>
+
+      {/* Panneau réactions */}
+      {open && (
+        <div className="fixed z-40 clic-fade-in"
+             style={{
+               right: 'calc(16px + env(safe-area-inset-right))',
+               bottom: 'calc(84px + env(safe-area-inset-bottom))',
+               width: 'min(320px, calc(100vw - 32px))',
+               background: C.white,
+               borderRadius: 24,
+               boxShadow: '0 8px 28px rgba(0,0,0,0.20)',
+               padding: 16,
+             }}>
+          {/* Emojis */}
+          <div className="grid grid-cols-4 gap-2 mb-3">
+            {REACTION_EMOJIS.map((e) => (
+              <button key={e} onClick={() => send('emoji', e)}
+                disabled={cooldown}
+                className="rounded-2xl clic-press"
+                style={{
+                  aspectRatio: '1 / 1', fontSize: '1.8rem',
+                  background: C.cream,
+                  opacity: cooldown ? 0.4 : 1,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                {e}
+              </button>
+            ))}
+          </div>
+          {/* Phrases */}
+          <div className="flex flex-col gap-2">
+            {REACTION_PHRASES.map((p) => (
+              <button key={p} onClick={() => send('phrase', p)}
+                disabled={cooldown}
+                className="rounded-2xl px-3 py-2 text-left clic-press text-sm"
+                style={{
+                  background: C.lavender, color: C.ink,
+                  fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                  opacity: cooldown ? 0.4 : 1,
+                }}>
+                {p}
+              </button>
+            ))}
+          </div>
+          {cooldown && (
+            <div className="text-xs text-center mt-2" style={{ color: C.inkSoft, fontWeight: 600 }}>
+              Attends un instant... ⏳
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
 function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onChangeGame }) {
   const [currentRoom, setCurrentRoom] = useState(room);
   const [profiles, setProfiles] = useState({});
@@ -3045,6 +3218,7 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onC
         const wrappedChangeGame = (onChangeGame && opponent)
           ? () => onChangeGame({ id: opponent.id, pseudo: opponent.pseudo, avatar: opponent.avatar })
           : null;
+        const myIndex = isHost ? 0 : 1;
         const gameProps = {
           room: currentRoom,
           profile,
@@ -3053,27 +3227,39 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onC
           onUpdate: updateCurrent,
           onChangeGame: wrappedChangeGame,
         };
-        switch (currentRoom.game) {
-          case 'morpion':  return <TicTacToeOnline {...gameProps} />;
-          case 'connect4': return <Connect4Online  {...gameProps} />;
-          case 'pendu':    return <PenduOnline     {...gameProps} />;
-          case 'echecs':   return <EchecsOnline    {...gameProps} />;
-          case 'math':     return <MathDuelOnline  {...gameProps} />;
-          case 'geo':      return <GeoQuizOnline   {...gameProps} />;
-          default:
-            return (
-              <div className="rounded-2xl p-4 text-center" style={{
-                background: C.peach, boxShadow: '0 4px 0 rgba(0,0,0,0.06)',
-              }}>
-                <p className="text-sm mb-2" style={{ color: C.ink, fontWeight: 700 }}>
-                  🎉 Les 2 joueurs sont là !
-                </p>
-                <p className="text-xs" style={{ color: C.inkLight, fontWeight: 600 }}>
-                  Ce jeu n'est pas encore disponible en ligne. Bientôt !
-                </p>
-              </div>
-            );
-        }
+        const gameView = (() => {
+          switch (currentRoom.game) {
+            case 'morpion':  return <TicTacToeOnline {...gameProps} />;
+            case 'connect4': return <Connect4Online  {...gameProps} />;
+            case 'pendu':    return <PenduOnline     {...gameProps} />;
+            case 'echecs':   return <EchecsOnline    {...gameProps} />;
+            case 'math':     return <MathDuelOnline  {...gameProps} />;
+            case 'geo':      return <GeoQuizOnline   {...gameProps} />;
+            default:
+              return (
+                <div className="rounded-2xl p-4 text-center" style={{
+                  background: C.peach, boxShadow: '0 4px 0 rgba(0,0,0,0.06)',
+                }}>
+                  <p className="text-sm mb-2" style={{ color: C.ink, fontWeight: 700 }}>
+                    🎉 Les 2 joueurs sont là !
+                  </p>
+                  <p className="text-xs" style={{ color: C.inkLight, fontWeight: 600 }}>
+                    Ce jeu n'est pas encore disponible en ligne. Bientôt !
+                  </p>
+                </div>
+              );
+          }
+        })();
+        return (
+          <>
+            {gameView}
+            <ReactionLayer
+              roomId={currentRoom.id}
+              myIndex={myIndex}
+              players={[player1, player2]}
+            />
+          </>
+        );
       })()}
     </div>
   );

@@ -285,6 +285,50 @@ export function subscribeToRoom(roomId, callback) {
 }
 
 // ============================================================
+// RÉACTIONS — communication légère entre joueurs (emojis + phrases)
+// ------------------------------------------------------------
+// On utilise un channel Realtime de type "broadcast" plutôt que de stocker
+// la réaction dans room.state. Raison : les réactions sont ÉPHÉMÈRES (elles
+// s'affichent 2s puis disparaissent) et ne doivent PAS écraser l'état du jeu
+// (sinon une réaction envoyée en même temps qu'un coup pourrait annuler le
+// coup à cause du last-write-wins sur room.state).
+//
+// Le broadcast ne touche jamais la base de données : c'est juste un message
+// temps réel transmis aux autres clients abonnés au même room.
+// ============================================================
+
+// S'abonne aux réactions d'une room. callback reçoit { kind, content, by }.
+export function subscribeToReactions(roomId, callback) {
+  const channelName = `reactions-${roomId}`;
+  const channel = supabase
+    .channel(channelName)
+    .on('broadcast', { event: 'reaction' }, (payload) => {
+      callback(payload.payload);
+    })
+    .subscribe();
+
+  return {
+    channel,
+    unsubscribe: () => supabase.removeChannel(channel),
+  };
+}
+
+// Envoie une réaction sur le channel d'une room.
+// reaction = { kind: 'emoji'|'phrase'|'hello', content: '👏', by: 0|1 }
+export async function sendReaction(channel, reaction) {
+  if (!channel) return;
+  try {
+    await channel.send({
+      type: 'broadcast',
+      event: 'reaction',
+      payload: reaction,
+    });
+  } catch (e) {
+    // silencieux : une réaction perdue n'est pas grave
+  }
+}
+
+// ============================================================
 // getProfilesByIds — Récupérer plusieurs profils en une fois
 // Utile pour afficher les pseudos des 2 joueurs
 // ============================================================
@@ -313,21 +357,4 @@ export async function updateRoomInvite(roomId, invitedId) {
     .update({ invited_id: invitedId, updated_at: new Date().toISOString() })
     .eq('id', roomId);
   return { ok: !error, error: error?.message };
-}
-
-// ============================================================
-// listMyRooms — Toutes mes rooms ouvertes (waiting ou playing)
-// ============================================================
-export async function listMyRooms() {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return [];
-
-  const { data } = await supabase
-    .from('rooms')
-    .select('*')
-    .or(`player1_id.eq.${user.id},player2_id.eq.${user.id}`)
-    .in('status', ['waiting', 'playing'])
-    .order('created_at', { ascending: false });
-
-  return data || [];
 }
