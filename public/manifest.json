@@ -1,9 +1,8 @@
 {
-  "name": "ClicJeu",
+  "name": "ClicJeu — 8 jeux pour 2 joueurs",
   "short_name": "ClicJeu",
-  "description": "6 jeux pour 2 joueurs : Tic Tac Toe, Puissance 4, Pendu, Échecs, Math Duel, Géo Quiz.",
+  "description": "Joue à 8 mini-jeux fun avec un ami : Tic Tac Toe, Puissance 4, Pendu, Échecs, Math Duel, Géo Quiz, Pierre Feuille Ciseaux et Course au trésor.",
   "start_url": "/",
-  "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#FFF5F5",
@@ -11,23 +10,8 @@
   "lang": "fr",
   "categories": ["games", "education"],
   "icons": [
-    {
-      "src": "/icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icon-maskable.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "maskable"
-    }
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }
