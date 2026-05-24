@@ -8,6 +8,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
     <meta name="theme-color" content="#FF8FB1" />
 
+    <!-- Manifest PWA : rend l'app installable sur l'écran d'accueil.
+         IMPORTANT : on N'enregistre AUCUN Service Worker (voir plus bas).
+         C'est exactement la recette de GeoDojo, qui est installable SANS
+         déclencher l'avertissement Play Protect. Le Service Worker était
+         le coupable du warning "Appli non sécurisée" — on s'en passe. -->
+    <link rel="manifest" href="/manifest.json" />
+
     <title>ClicJeu — 8 jeux pour 2 joueurs</title>
     <meta name="description" content="Joue à 8 mini-jeux fun avec un ami : Tic Tac Toe, Puissance 4, Pendu, Échecs, Math Duel, Géo Quiz, Pierre Feuille Ciseaux et Course au trésor." />
 
@@ -21,7 +28,7 @@
     <!-- Carte de partage Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="ClicJeu — 8 jeux pour 2 joueurs" />
-    <meta name="twitter:description" content="Joue à 6 mini-jeux fun avec un ami." />
+    <meta name="twitter:description" content="Joue à 8 mini-jeux fun avec un ami." />
     <meta name="twitter:image" content="https://clicjeu.com/logo.svg" />
 
     <style>
@@ -54,12 +61,17 @@
     <script type="module" src="/src/main.jsx"></script>
 
     <!-- ============================================================
-         PWA temporairement désactivée.
-         Ce script DÉSENREGISTRE tout Service Worker déjà installé
-         chez les utilisateurs qui avaient visité le site quand le
-         PWA était actif. Sans ça, leur ancien SW continuerait de
-         tourner et de mettre en cache. À RETIRER quand on remettra
-         le PWA en place.
+         PAS de Service Worker — par choix.
+         ClicJeu est installable (manifest ci-dessus) mais SANS Service
+         Worker, car c'est le SW qui déclenchait l'avertissement Play
+         Protect "Appli non sécurisée" sur Android/Samsung. GeoDojo, qui
+         marche sans warning, fonctionne exactement ainsi (manifest seul).
+         Comme ClicJeu est un jeu multijoueur temps réel, il a besoin
+         d'internet de toute façon : on ne perd rien sans SW (et en bonus,
+         aucun souci de cache).
+
+         Ce script désenregistre tout ancien SW resté chez les utilisateurs
+         qui avaient l'ancienne version. À GARDER.
          ============================================================ -->
     <script>
       if ('serviceWorker' in navigator) {
