@@ -2633,6 +2633,82 @@ function TrophiesScreen({ profile, onBack }) {
   );
 }
 
+// ============================================================
+// INSTALL BANNER — proposer d'installer ClicJeu sur l'écran d'accueil
+// ------------------------------------------------------------
+// Calqué sur GeoDojo : on capte l'événement beforeinstallprompt (émis par
+// Chrome/Android quand l'app est installable) et on affiche un petit
+// bandeau "Installer". AUCUN Service Worker n'est utilisé (c'est lui qui
+// causait le warning Play Protect). L'app reste installable via le manifest.
+//
+// Le bandeau ne s'affiche jamais si :
+//   - l'app est déjà installée (mode standalone)
+//   - le navigateur n'émet pas beforeinstallprompt (iOS Safari, etc.)
+//   - l'utilisateur l'a fermé pour cette session
+// ============================================================
+function InstallBanner() {
+  const [promptEvent, setPromptEvent] = useState(null);
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    // Si déjà installée (lancée en standalone), on ne propose rien
+    const isStandalone = window.matchMedia &&
+      window.matchMedia('(display-mode: standalone)').matches;
+    if (isStandalone) return;
+
+    const handler = (e) => {
+      e.preventDefault();        // on garde la main pour déclencher plus tard
+      setPromptEvent(e);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    // Quand l'app vient d'être installée, on cache le bandeau
+    const installedHandler = () => setPromptEvent(null);
+    window.addEventListener('appinstalled', installedHandler);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handler);
+      window.removeEventListener('appinstalled', installedHandler);
+    };
+  }, []);
+
+  if (!promptEvent || dismissed) return null;
+
+  const doInstall = async () => {
+    promptEvent.prompt();
+    try {
+      const choice = await promptEvent.userChoice;
+      if (choice.outcome === 'accepted') setPromptEvent(null);
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <div className="rounded-2xl p-3 mb-3 flex items-center gap-3 clic-fade-in"
+         style={{ background: C.lavender, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
+      <div className="text-2xl">📲</div>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm" style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+          Installer ClicJeu
+        </div>
+        <div className="text-xs" style={{ color: C.inkLight, fontWeight: 600 }}>
+          Ajoute l'app à ton écran d'accueil
+        </div>
+      </div>
+      <button onClick={doInstall}
+        className="text-sm px-4 py-2 rounded-full clic-press"
+        style={{ background: C.accentPink, color: C.white, fontWeight: 700,
+                 fontFamily: '"Fredoka", sans-serif', flexShrink: 0,
+                 boxShadow: '0 3px 0 rgba(0,0,0,0.10)' }}>
+        Installer
+      </button>
+      <button onClick={() => setDismissed(true)}
+        aria-label="Fermer"
+        style={{ background: 'none', border: 'none', color: C.inkSoft,
+                 fontSize: 20, lineHeight: 1, cursor: 'pointer', flexShrink: 0, padding: '0 2px' }}>
+        ×
+      </button>
+    </div>
+  );
+}
+
 function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
                       pendingFriendRequests = 0, friends = [],
                       onQuickInvite,
@@ -2674,6 +2750,9 @@ function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
       <ProfileBar profile={profile} onLogout={onLogout}
                   onOpenFriends={onOpenFriends} pendingFriends={pendingFriendRequests}
                   onEditAvatar={onEditAvatar} />
+
+      {/* Bandeau d'installation (PWA sans Service Worker) */}
+      <InstallBanner />
 
       {/* Toast (timeout, erreur, etc.) */}
       {toast && (
@@ -4332,12 +4411,14 @@ const COURSE_CASE_INFO = {
 };
 
 const COURSE_PAWNS = ['🐱', '🦊'];  // pion J1, pion J2
+const COURSE_DICE_FACES = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];  // index 1-6
 
 function makeCourseState() {
   return {
     positions: [0, 0],     // case de chaque pion
     turn: 0,               // à qui de jouer
     lastRoll: null,        // dernier dé (pour l'afficher)
+    lastActor: null,       // qui a lancé le dernier dé (0 | 1)
     skipNext: [false, false],
     winner: null,
     moveSeq: 0,            // incrémente à chaque coup (pour déclencher l'anim)
@@ -4381,7 +4462,7 @@ function CourseOnline({ room, profile, player1, player2, onUpdate, onChangeGame,
   const players = [player1, player2];
 
   const state = (room.state && room.state.positions) ? room.state : makeCourseState();
-  const { positions, turn, lastRoll, skipNext, winner, moveSeq, lastEffect } = state;
+  const { positions, turn, lastRoll, lastActor, skipNext, winner, moveSeq, lastEffect } = state;
 
   const isMyTurn = !isSpectator && turn === myIndex && winner == null;
 
@@ -4389,6 +4470,9 @@ function CourseOnline({ room, profile, player1, player2, onUpdate, onChangeGame,
   // state et on les rattrape en douceur quand elles changent.
   const [animPos, setAnimPos] = useState(positions);
   const [rolling, setRolling] = useState(false);
+  // Écran de règles affiché au début (une fois par entrée dans le jeu).
+  // Local à chaque joueur : chacun voit les règles sur son propre appareil.
+  const [showRules, setShowRules] = useState(true);
   const lastSeqRef = useRef(moveSeq);
 
   // Quand le state change (nouveau coup), on anime le(s) pion(s) vers la
@@ -4448,6 +4532,7 @@ function CourseOnline({ room, profile, player1, player2, onUpdate, onChangeGame,
         ...state,
         positions: newPositions,
         lastRoll: roll,
+        lastActor: myIndex,
         winner: myIndex,
         moveSeq: moveSeq + 1,
         lastEffect: '🏆 Trésor atteint !',
@@ -4489,10 +4574,11 @@ function CourseOnline({ room, profile, player1, player2, onUpdate, onChangeGame,
       positions: newPositions,
       turn: reachedTreasure ? turn : nextTurn,
       lastRoll: roll,
+      lastActor: myIndex,
       skipNext: newSkip,
       winner: reachedTreasure ? myIndex : null,
       moveSeq: moveSeq + 1,
-      lastEffect: reachedTreasure ? '🏆 Trésor atteint !' : (eff.effectText || `🎲 ${roll}`),
+      lastEffect: reachedTreasure ? '🏆 Trésor atteint !' : (eff.effectText || null),
     };
     onUpdate({ ...room, state: newState });
     await updateRoomState(room.id, { state: newState });
@@ -4507,12 +4593,10 @@ function CourseOnline({ room, profile, player1, player2, onUpdate, onChangeGame,
     await updateRoomState(room.id, { state: newState });
   };
 
-  // Bannière d'état
+  // Bannière d'état (le détail du dé + action est dans l'annonce dédiée)
   let banner;
   if (winner != null) {
     banner = `🏆 ${players[winner]?.pseudo || 'Joueur'} trouve le trésor !`;
-  } else if (lastEffect && !isMyTurn) {
-    banner = lastEffect;
   } else if (isSpectator) {
     banner = `👀 Au tour de ${players[turn]?.pseudo || 'Joueur'}`;
   } else if (isMyTurn) {
@@ -4537,6 +4621,61 @@ function CourseOnline({ room, profile, player1, player2, onUpdate, onChangeGame,
 
   return (
     <div>
+      {/* === Écran de règles au démarrage === */}
+      {showRules && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+             style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="w-full max-w-sm rounded-3xl p-6 clic-pop"
+               style={{ background: C.white, boxShadow: '0 10px 30px rgba(0,0,0,0.25)',
+                        maxHeight: '85vh', overflowY: 'auto' }}>
+            <div className="text-center mb-3">
+              <div className="text-5xl mb-1">🎲🏆</div>
+              <h3 className="text-xl" style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+                Course au trésor
+              </h3>
+              <p className="text-sm mt-1" style={{ color: C.inkLight, fontWeight: 600 }}>
+                Le premier à atteindre le trésor 🏆 gagne !
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2 mb-4">
+              {[
+                { e: '🎲', t: 'Chacun son tour, lance le dé pour avancer.' },
+                { e: '⏩', t: 'Case bleue : avance de 2 cases.' },
+                { e: '⏪', t: 'Case rose : recule de 3 cases.' },
+                { e: '🔄', t: 'Case jaune : tu rejoues tout de suite !' },
+                { e: '⏸️', t: 'Case violette : ton adversaire passe son tour.' },
+                { e: '🌟', t: 'Étoile : téléporte-toi 4 cases plus loin.' },
+                { e: '🎁', t: 'Cadeau : une surprise au hasard !' },
+              ].map((r, i) => (
+                <div key={i} className="flex items-center gap-2 p-2 rounded-xl" style={{ background: C.cream }}>
+                  <span className="text-xl" style={{ flexShrink: 0 }}>{r.e}</span>
+                  <span className="text-xs" style={{ color: C.ink, fontWeight: 600 }}>{r.t}</span>
+                </div>
+              ))}
+            </div>
+
+            <button onClick={() => { tap(); setShowRules(false); }}
+              className="w-full py-3 rounded-2xl clic-press"
+              style={{ background: C.accentPink, color: C.white,
+                       fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                       boxShadow: '0 4px 0 rgba(0,0,0,0.10)' }}>
+              C'est parti ! 🚀
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Petit bouton "règles" pour les revoir */}
+      <div className="flex justify-end mb-2">
+        <button onClick={() => { tap(); setShowRules(true); }}
+          className="text-xs px-3 py-1 rounded-full clic-press"
+          style={{ background: C.white, color: C.inkLight, fontWeight: 700,
+                   boxShadow: '0 2px 0 rgba(0,0,0,0.06)' }}>
+          ❓ Règles
+        </button>
+      </div>
+
       {/* Scoreboard : position de chaque joueur */}
       <div className="grid grid-cols-2 gap-3 mb-4">
         {[0, 1].map((i) => {
@@ -4560,6 +4699,27 @@ function CourseOnline({ room, profile, player1, player2, onUpdate, onChangeGame,
           );
         })}
       </div>
+
+      {/* === Annonce du dernier lancer : chiffre + action === */}
+      {lastRoll && lastActor != null && winner == null && (
+        <div key={moveSeq} className="rounded-2xl p-3 mb-4 flex items-center gap-3 clic-pop"
+             style={{ background: C.white, boxShadow: '0 4px 0 rgba(0,0,0,0.08)' }}>
+          <div className="flex items-center justify-center rounded-xl"
+               style={{ width: 48, height: 48, background: C.mint, flexShrink: 0 }}>
+            <span style={{ fontSize: '2rem', lineHeight: 1 }}>{COURSE_DICE_FACES[lastRoll]}</span>
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm" style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+              {COURSE_PAWNS[lastActor]} {players[lastActor]?.pseudo || 'Joueur'} a fait {lastRoll} !
+            </div>
+            {lastEffect && (
+              <div className="text-xs" style={{ color: C.accentPink, fontWeight: 700 }}>
+                {lastEffect}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <Banner text={banner}
         color={winner != null ? '#6BCB77' : C.accentPink}
@@ -4611,16 +4771,8 @@ function CourseOnline({ room, profile, player1, player2, onUpdate, onChangeGame,
             boxShadow: '0 4px 0 rgba(0,0,0,0.10)',
           }}>
           <span style={{ fontSize: '1.6rem' }}>🎲</span>
-          {rolling ? 'Lancement...' : lastRoll && isMyTurn ? `Lancer (dernier : ${lastRoll})` : 'Lancer le dé'}
+          {rolling ? 'Lancement...' : 'Lancer le dé'}
         </button>
-      )}
-
-      {/* Spectateur : juste le dernier dé */}
-      {winner == null && isSpectator && lastRoll && (
-        <div className="rounded-2xl p-3 text-center text-sm"
-             style={{ background: 'rgba(255,255,255,0.6)', color: C.inkLight, fontWeight: 600 }}>
-          🎲 Dernier lancer : {lastRoll}
-        </div>
       )}
 
       {/* Fin de partie */}
