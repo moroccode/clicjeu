@@ -236,6 +236,58 @@ export async function joinRoom({ code }) {
 }
 
 // ============================================================
+// SPECTATEUR — regarder une partie en cours sans y participer
+// ------------------------------------------------------------
+// Un spectateur ne modifie PAS la room (ne prend pas de slot joueur).
+// Il lit juste room.state via la subscription Realtime existante et
+// l'affiche en lecture seule. Aucune écriture en base.
+// ============================================================
+
+// Trouve une partie en cours par code, pour la regarder (sans la rejoindre).
+export async function findRoomToSpectate({ code }) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Tu dois être connecté.' };
+
+  const cleanCode = (code || '').trim().toUpperCase();
+  const { data: room, error } = await supabase
+    .from('rooms')
+    .select('*')
+    .eq('code', cleanCode)
+    .maybeSingle();
+
+  if (error || !room) return { ok: false, error: 'Partie introuvable 🤔' };
+  if (room.status === 'finished') return { ok: false, error: 'Cette partie est terminée.' };
+  if (room.status !== 'playing') return { ok: false, error: 'La partie n\'a pas encore commencé.' };
+  return { ok: true, room };
+}
+
+// Trouve la partie en cours d'un joueur donné (pour "regarder un ami").
+// Renvoie la room 'playing' la plus récente où l'ami est player1 ou player2.
+export async function findFriendActiveRoom(friendId) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Tu dois être connecté.' };
+
+  const { data: rooms, error } = await supabase
+    .from('rooms')
+    .select('*')
+    .eq('status', 'playing')
+    .or(`player1_id.eq.${friendId},player2_id.eq.${friendId}`)
+    .order('updated_at', { ascending: false })
+    .limit(1);
+
+  if (error) return { ok: false, error: 'Erreur réseau.' };
+  if (!rooms || rooms.length === 0) {
+    return { ok: false, error: 'Ton ami n\'est pas en partie là.' };
+  }
+  const room = rooms[0];
+  // On ne se laisse pas "regarder" sa propre partie
+  if (room.player1_id === user.id || room.player2_id === user.id) {
+    return { ok: false, error: 'C\'est ta partie !' };
+  }
+  return { ok: true, room };
+}
+
+// ============================================================
 // getRoom — Charger un salon par son ID (pour rafraîchir)
 // ============================================================
 export async function getRoom(roomId) {
@@ -392,4 +444,57 @@ export async function updateRoomInvite(roomId, invitedId) {
     .update({ invited_id: invitedId, updated_at: new Date().toISOString() })
     .eq('id', roomId);
   return { ok: !error, error: error?.message };
+}
+
+// ============================================================
+// MATCH RESULTS — enregistrement du résultat d'une partie terminée
+// ------------------------------------------------------------
+// Sert à alimenter le tableau des scores entre amis et les badges.
+// IMPORTANT : seul l'HÔTE (player1) doit appeler ceci, et une seule fois
+// par partie. La contrainte UNIQUE(room_id) côté base empêche les doublons
+// (un 2e insert sur la même room échoue silencieusement — c'est voulu).
+//
+// winnerId : l'id du gagnant, ou null pour un match nul.
+// ============================================================
+export async function recordMatchResult({ roomId, game, player1Id, player2Id, winnerId = null }) {
+  // Garde-fous basiques côté client (la RLS protège côté serveur en plus)
+  if (!roomId || !game || !player1Id || !player2Id) {
+    return { ok: false, error: 'Données de résultat incomplètes.' };
+  }
+  const { error } = await supabase
+    .from('match_results')
+    .insert({
+      room_id: roomId,
+      game,
+      player1_id: player1Id,
+      player2_id: player2Id,
+      winner_id: winnerId,
+    });
+
+  // Code 23505 = violation de contrainte unique = résultat déjà enregistré.
+  // Ce n'est PAS une vraie erreur dans notre cas (anti-doublon), on l'ignore.
+  if (error && error.code !== '23505') {
+    return { ok: false, error: error.message };
+  }
+  return { ok: true, duplicate: error?.code === '23505' };
+}
+
+// ============================================================
+// fetchMyMatchResults — toutes les parties où j'ai joué
+// ------------------------------------------------------------
+// Utilisé pour calculer (côté client) le tableau des scores entre amis
+// et les badges. La RLS garantit qu'on ne reçoit que nos propres parties.
+// ============================================================
+export async function fetchMyMatchResults() {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Non connecté.', results: [] };
+
+  const { data, error } = await supabase
+    .from('match_results')
+    .select('*')
+    .or(`player1_id.eq.${user.id},player2_id.eq.${user.id}`)
+    .order('created_at', { ascending: true });
+
+  if (error) return { ok: false, error: error.message, results: [] };
+  return { ok: true, results: data || [] };
 }

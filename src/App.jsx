@@ -5,7 +5,9 @@ import { createRoom, joinRoom, subscribeToRoom, getProfilesByIds, updateRoomStat
          listIncomingInvitations, subscribeToInvitations, cancelInvitation,
          updateRoomInvite, dismissInvitation, cleanupStaleWaitingRooms,
          restoreActiveRoom, subscribeToReactions, sendReaction,
-         subscribeToGameSignals, sendGameSignal } from './rooms';
+         subscribeToGameSignals, sendGameSignal,
+         findRoomToSpectate, findFriendActiveRoom, recordMatchResult,
+         fetchMyMatchResults } from './rooms';
 import { searchUsers, sendFriendRequest, acceptFriendRequest, rejectFriendRequest,
          removeFriend, listFriends, listPendingRequests, listSentRequests, syncFriendships } from './friends';
 import { Chess } from 'chess.js';
@@ -57,6 +59,7 @@ const LS = {
   ONBOARDED: 'gh_onboarded',
   PENDING_REF: 'cj_pending_ref',  // pseudo du parrain à associer après inscription
   ACTIVE_ROOM: 'cj_active_room_id',  // id de la room où on était quand l'onglet a été tué
+  SPECTATED: 'cj_has_spectated',  // a déjà regardé une partie (pour le badge Spectateur)
 };
 
 // ============================================================
@@ -1070,6 +1073,96 @@ const GAMES = {
 };
 
 // ============================================================
+// STATS & BADGES — calcul côté client à partir des match_results
+// ------------------------------------------------------------
+// Tout est calculé en JS depuis la liste des parties où le joueur a
+// participé. Pas de fonction SQL : tant qu'un enfant n'a pas des milliers
+// de parties, c'est instantané.
+// ============================================================
+
+// Définition des badges. `check(stats)` renvoie true si débloqué.
+// L'ordre = ordre d'affichage dans la page Trophées.
+const BADGES = [
+  { id: 'first_game',  emoji: '🎮', title: 'Première partie',  desc: 'Joue ta 1re partie',
+    check: (s) => s.totalGames >= 1 },
+  { id: 'first_win',   emoji: '🏆', title: 'Première victoire', desc: 'Gagne 1 partie',
+    check: (s) => s.totalWins >= 1 },
+  { id: 'streak3',     emoji: '🔥', title: 'Sur ta lancée',     desc: 'Gagne 3 fois de suite',
+    check: (s) => s.bestStreak >= 3 },
+  { id: 'regular',     emoji: '💪', title: 'Habitué',           desc: 'Joue 10 parties',
+    check: (s) => s.totalGames >= 10 },
+  { id: 'veteran',     emoji: '🌟', title: 'Vétéran',           desc: 'Joue 50 parties',
+    check: (s) => s.totalGames >= 50 },
+  { id: 'all_games',   emoji: '🎯', title: 'Touche-à-tout',     desc: 'Joue aux 6 jeux',
+    check: (s) => s.distinctGames >= 6 },
+  { id: 'champion',    emoji: '👑', title: 'Champion',          desc: 'Gagne 25 parties',
+    check: (s) => s.totalWins >= 25 },
+  { id: 'social',      emoji: '🤝', title: 'Sociable',          desc: 'Joue avec 3 amis différents',
+    check: (s) => s.distinctOpponents >= 3 },
+  { id: 'spectator',   emoji: '👀', title: 'Spectateur',        desc: 'Regarde une partie d\'amis',
+    check: (s) => s.hasSpectated },
+];
+
+// Calcule toutes les stats d'un joueur à partir de ses parties.
+// myId : mon id. results : lignes match_results (triées par date croissante).
+// extras : { hasSpectated } — infos qui ne viennent pas de la base.
+function computeStats(myId, results, extras = {}) {
+  let totalWins = 0, totalLosses = 0, totalDraws = 0;
+  let bestStreak = 0, currentStreak = 0;
+  const games = new Set();
+  const opponents = new Set();
+
+  for (const r of results) {
+    games.add(r.game);
+    const oppId = r.player1_id === myId ? r.player2_id : r.player1_id;
+    if (oppId) opponents.add(oppId);
+
+    if (r.winner_id == null) {
+      totalDraws++;
+      currentStreak = 0;
+    } else if (r.winner_id === myId) {
+      totalWins++;
+      currentStreak++;
+      if (currentStreak > bestStreak) bestStreak = currentStreak;
+    } else {
+      totalLosses++;
+      currentStreak = 0;
+    }
+  }
+
+  return {
+    totalGames: results.length,
+    totalWins, totalLosses, totalDraws,
+    bestStreak,
+    distinctGames: games.size,
+    distinctOpponents: opponents.size,
+    hasSpectated: !!extras.hasSpectated,
+  };
+}
+
+// Bilan détaillé contre UN adversaire donné, par jeu + total.
+// Renvoie { wins, losses, draws, byGame: { morpion: {w,l,d}, ... } }
+function computeHeadToHead(myId, opponentId, results) {
+  const tally = { wins: 0, losses: 0, draws: 0, byGame: {} };
+  for (const r of results) {
+    const isVsThisOpp =
+      (r.player1_id === myId && r.player2_id === opponentId) ||
+      (r.player2_id === myId && r.player1_id === opponentId);
+    if (!isVsThisOpp) continue;
+
+    if (!tally.byGame[r.game]) tally.byGame[r.game] = { w: 0, l: 0, d: 0 };
+    if (r.winner_id == null) {
+      tally.draws++; tally.byGame[r.game].d++;
+    } else if (r.winner_id === myId) {
+      tally.wins++; tally.byGame[r.game].w++;
+    } else {
+      tally.losses++; tally.byGame[r.game].l++;
+    }
+  }
+  return tally;
+}
+
+// ============================================================
 // GAMEHUB — niveau supérieur de l'app connectée
 // Gère plusieurs rooms ouvertes + notifications de tour
 // ============================================================
@@ -1077,7 +1170,9 @@ function GameHub({ profile, onLogout, onEditAvatar }) {
   // Navigation
   const [selectedGame, setSelectedGame] = useState(null);
   const [soloGame, setSoloGame]         = useState(null);  // 'math' | 'geo' | null
+  const [spectatorRoom, setSpectatorRoom] = useState(null);  // room qu'on regarde
   const [showFriends, setShowFriends]   = useState(false);
+  const [showTrophies, setShowTrophies] = useState(false);
   const [creatingRoom, setCreatingRoom] = useState(false);
 
   // UNE seule room active à la fois
@@ -1340,6 +1435,23 @@ function GameHub({ profile, onLogout, onEditAvatar }) {
     return null;
   };
 
+  // Regarder la partie en cours d'un ami (mode spectateur)
+  const watchFriend = async (friendId) => {
+    const result = await findFriendActiveRoom(friendId);
+    if (result.ok) {
+      // Mémorise qu'on a regardé une partie (badge Spectateur)
+      try { localStorage.setItem(LS.SPECTATED, '1'); } catch {}
+      setSpectatorRoom(result.room);
+      const ids = [result.room.player1_id, result.room.player2_id].filter(Boolean);
+      if (ids.length > 0) {
+        getProfilesByIds(ids).then((p) => setRoomProfiles((prev) => ({ ...prev, ...p })));
+      }
+    } else {
+      setToast({ message: result.error || 'Impossible de regarder', type: 'info' });
+      setTimeout(() => setToast(null), 3500);
+    }
+  };
+
   // Accepter une invitation reçue
   const acceptIncoming = async (room) => {
     setIncomingInvites((prev) => prev.filter((r) => r.id !== room.id));
@@ -1364,6 +1476,9 @@ function GameHub({ profile, onLogout, onEditAvatar }) {
   // ajouter des overlays (modal "Quitter", toast) AU-DESSUS de tout
   // écran, peu importe lequel est affiché ===
   const renderScreen = () => {
+    if (showTrophies) {
+      return <TrophiesScreen profile={profile} onBack={() => setShowTrophies(false)} />;
+    }
     if (showFriends) {
       return <FriendsScreen profile={profile}
         onBack={() => { setShowFriends(false); setQuickInviteFriend(null); }}
@@ -1372,6 +1487,10 @@ function GameHub({ profile, onLogout, onEditAvatar }) {
           setShowFriends(false);
           setQuickInviteFriend(null);
           await createOnlineRoom(gameId, friend.id);
+        }}
+        onWatchFriend={async (friend) => {
+          setShowFriends(false);
+          await watchFriend(friend.id);
         }}
       />;
     }
@@ -1399,6 +1518,21 @@ function GameHub({ profile, onLogout, onEditAvatar }) {
               setShowFriends(true);
               setQuickInviteFriend(opponentFriend);
             }}
+          />
+        </LobbyErrorBoundary>
+      );
+    }
+    if (spectatorRoom) {
+      return (
+        <LobbyErrorBoundary key={'spec-' + spectatorRoom.id} onLeave={() => setSpectatorRoom(null)}>
+          <Lobby
+            profile={profile}
+            room={spectatorRoom}
+            roomProfiles={roomProfiles}
+            isSpectator={true}
+            onRoomUpdate={setSpectatorRoom}
+            onLeave={() => setSpectatorRoom(null)}
+            onFinished={() => setSpectatorRoom(null)}
           />
         </LobbyErrorBoundary>
       );
@@ -1454,6 +1588,7 @@ function GameHub({ profile, onLogout, onEditAvatar }) {
           playSound('pop');
         }}
         toast={toast}
+        onOpenTrophies={() => setShowTrophies(true)}
       />
     );
   };
@@ -1531,7 +1666,7 @@ function ExitConfirmModal({ onConfirm, onCancel }) {
 // ============================================================
 // FRIENDS SCREEN — Mes amis (liste + recherche + demandes)
 // ============================================================
-function FriendsScreen({ profile, onBack, onInviteToGame, initialInviteFriend = null }) {
+function FriendsScreen({ profile, onBack, onInviteToGame, initialInviteFriend = null, onWatchFriend = null }) {
   // Onglets : 'friends' (mes amis) | 'requests' (demandes reçues) | 'search' (chercher)
   const [tab, setTab] = useState('friends');
   const [friends, setFriends] = useState([]);
@@ -1543,18 +1678,21 @@ function FriendsScreen({ profile, onBack, onInviteToGame, initialInviteFriend = 
   // Si initialInviteFriend est fourni (tap sur la home), on démarre direct
   // sur ce picker.
   const [invitingFriend, setInvitingFriend] = useState(initialInviteFriend);
+  const [matchResults, setMatchResults] = useState([]);
 
   // Charger toutes les listes au montage
   const refresh = async () => {
     setLoading(true);
-    const [f, p, s] = await Promise.all([
+    const [f, p, s, mr] = await Promise.all([
       listFriends(),
       listPendingRequests(),
       listSentRequests(),
+      fetchMyMatchResults(),
     ]);
     setFriends(f);
     setPending(p);
     setSent(s);
+    setMatchResults(mr.results || []);
     setLoading(false);
   };
 
@@ -1604,7 +1742,8 @@ function FriendsScreen({ profile, onBack, onInviteToGame, initialInviteFriend = 
 
       {tab === 'friends' && (
         <FriendsList friends={friends} loading={loading} onRefresh={refresh}
-                     onInvite={setInvitingFriend} />
+                     onInvite={setInvitingFriend} onWatch={onWatchFriend}
+                     matchResults={matchResults} myId={profile.id} />
       )}
       {tab === 'requests' && (
         <RequestsList pending={pending} sent={sent} loading={loading} onRefresh={refresh} />
@@ -1685,7 +1824,7 @@ function FriendTab({ label, active, onClick, highlight = false }) {
 }
 
 // --- Liste de mes amis ---
-function FriendsList({ friends, loading, onRefresh, onInvite }) {
+function FriendsList({ friends, loading, onRefresh, onInvite, onWatch, matchResults = [], myId = null }) {
   if (loading) {
     return <div className="text-center text-sm py-6" style={{ color: C.inkLight, fontWeight: 600 }}>
       ⏳ Chargement...
@@ -1710,7 +1849,8 @@ function FriendsList({ friends, loading, onRefresh, onInvite }) {
   return (
     <div className="space-y-2">
       {friends.map((f) => (
-        <FriendRow key={f.id} friend={f} onRemoved={onRefresh} onInvite={onInvite} />
+        <FriendRow key={f.id} friend={f} onRemoved={onRefresh} onInvite={onInvite} onWatch={onWatch}
+                   headToHead={myId ? computeHeadToHead(myId, f.id, matchResults) : null} />
       ))}
     </div>
   );
@@ -1768,8 +1908,9 @@ function presenceLabel(online, busy) {
     : { text: 'en ligne', color: '#4CD964' };
 }
 
-function FriendRow({ friend, onRemoved, onInvite }) {
+function FriendRow({ friend, onRemoved, onInvite, onWatch, headToHead = null }) {
   const [confirming, setConfirming] = useState(false);
+  const [showDetail, setShowDetail] = useState(false);
   const onlineIds = usePresence();
   const isOnline = onlineIds.has(friend.id);
   const isBusy = isOnline && onlineIds.busy(friend.id);
@@ -1781,45 +1922,94 @@ function FriendRow({ friend, onRemoved, onInvite }) {
     onRemoved();
   };
 
+  // Bilan total contre cet ami (parties jouées ensemble)
+  const h2h = headToHead;
+  const totalH2H = h2h ? (h2h.wins + h2h.losses + h2h.draws) : 0;
+  const hasDetail = totalH2H > 0;
+
   return (
-    <div className="flex items-center gap-2 p-3 rounded-2xl"
+    <div className="rounded-2xl"
          style={{ background: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.05)' }}>
-      <div className="relative">
-        <div className="text-3xl">{friend.avatar || '👤'}</div>
-        <div style={{ position: 'absolute', right: -2, bottom: -2 }}>
-          <OnlineDot online={isOnline} busy={isBusy} size={11} />
-        </div>
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="truncate" style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
-          {friend.pseudo}
-        </div>
-        {label && (
-          <div className="text-xs" style={{ color: label.color, fontWeight: 700 }}>
-            {label.text}
+      <div className="flex items-center gap-2 p-3">
+        <div className="relative">
+          <div className="text-3xl">{friend.avatar || '👤'}</div>
+          <div style={{ position: 'absolute', right: -2, bottom: -2 }}>
+            <OnlineDot online={isOnline} busy={isBusy} size={11} />
           </div>
-        )}
-      </div>
-      {onInvite && (
-        <button onClick={() => onInvite(friend)}
+        </div>
+        <div className="flex-1 min-w-0"
+             onClick={() => hasDetail && setShowDetail((v) => !v)}
+             style={{ cursor: hasDetail ? 'pointer' : 'default' }}>
+          <div className="truncate" style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+            {friend.pseudo}
+          </div>
+          {/* Bilan "Toi X - Y" si on a déjà joué ensemble */}
+          {hasDetail ? (
+            <div className="text-xs flex items-center gap-1" style={{ color: C.inkLight, fontWeight: 700 }}>
+              <span>🏆 Toi {h2h.wins}</span>
+              <span style={{ color: C.inkSoft }}>-</span>
+              <span>{h2h.losses}</span>
+              {h2h.draws > 0 && <span style={{ color: C.inkSoft }}>({h2h.draws} nul{h2h.draws > 1 ? 's' : ''})</span>}
+              <span style={{ color: C.accentPink }}>{showDetail ? '▴' : '▾'}</span>
+            </div>
+          ) : label ? (
+            <div className="text-xs" style={{ color: label.color, fontWeight: 700 }}>
+              {label.text}
+            </div>
+          ) : null}
+        </div>
+        {/* Ami en partie → bouton "Regarder". Sinon → bouton "Inviter". */}
+        {isBusy && onWatch ? (
+          <button onClick={() => onWatch(friend)}
+            className="text-sm px-4 py-3 rounded-full clic-press"
+            style={{ background: C.lavender, color: C.ink, fontWeight: 700,
+                     fontFamily: '"Fredoka", sans-serif',
+                     boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
+            👀 Regarder
+          </button>
+        ) : onInvite ? (
+          <button onClick={() => onInvite(friend)}
+            className="text-sm px-4 py-3 rounded-full clic-press"
+            style={{ background: C.accentPink, color: C.white, fontWeight: 700,
+                     fontFamily: '"Fredoka", sans-serif',
+                     boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
+            🎮 Inviter
+          </button>
+        ) : null}
+        <button onClick={handleRemove}
           className="text-sm px-4 py-3 rounded-full clic-press"
-          style={{ background: C.accentPink, color: C.white, fontWeight: 700,
-                   fontFamily: '"Fredoka", sans-serif',
-                   boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
-          🎮 Inviter
+          style={{
+            background: confirming ? '#B33' : '#E15151',
+            color: C.white,
+            fontWeight: 700,
+            fontFamily: '"Fredoka", sans-serif',
+            boxShadow: '0 3px 0 rgba(0,0,0,0.08)',
+          }}>
+          {confirming ? 'Sûr ?' : 'Retirer'}
         </button>
+      </div>
+
+      {/* Détail par jeu (déplié au tap sur le pseudo) */}
+      {showDetail && hasDetail && (
+        <div className="px-3 pb-3 clic-fade-in">
+          <div className="rounded-xl p-2" style={{ background: C.cream }}>
+            {Object.entries(h2h.byGame).map(([gid, rec]) => {
+              const g = GAMES[gid];
+              if (!g) return null;
+              return (
+                <div key={gid} className="flex items-center justify-between py-1 px-1">
+                  <span className="text-xs" style={{ color: C.ink, fontWeight: 700 }}>
+                    {g.cardEmoji} {g.title}
+                  </span>
+                  <span className="text-xs" style={{ color: C.inkLight, fontWeight: 700 }}>
+                    {rec.w} - {rec.l}{rec.d > 0 ? ` (${rec.d} nul${rec.d > 1 ? 's' : ''})` : ''}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
-      <button onClick={handleRemove}
-        className="text-sm px-4 py-3 rounded-full clic-press"
-        style={{
-          background: confirming ? '#B33' : '#E15151',
-          color: C.white,
-          fontWeight: 700,
-          fontFamily: '"Fredoka", sans-serif',
-          boxShadow: '0 3px 0 rgba(0,0,0,0.08)',
-        }}>
-        {confirming ? 'Sûr ?' : 'Retirer'}
-      </button>
     </div>
   );
 }
@@ -2254,7 +2444,7 @@ function IncomingInvitesBanner({ invites, onAccept, onIgnore }) {
 // au-dessus de "Salut Pseudo"). Cliquable → dropdown avec
 // "Changer mon avatar" et "Se déconnecter".
 // ============================================================
-function AvatarCard({ profile, onEditAvatar, onLogout }) {
+function AvatarCard({ profile, onEditAvatar, onLogout, onOpenTrophies }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -2308,6 +2498,13 @@ function AvatarCard({ profile, onEditAvatar, onLogout }) {
               🎨 Changer mon avatar
             </button>
           )}
+          {onOpenTrophies && (
+            <button onClick={() => { setOpen(false); onOpenTrophies(); }}
+              className="w-full text-left px-3 py-3 rounded-xl text-sm clic-press"
+              style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+              🏆 Mes trophées
+            </button>
+          )}
           <div style={{ height: 1, background: C.cream, margin: '4px 8px' }} />
           <button onClick={() => { setOpen(false); onLogout(); }}
             className="w-full text-left px-3 py-3 rounded-xl text-sm clic-press"
@@ -2320,11 +2517,105 @@ function AvatarCard({ profile, onEditAvatar, onLogout }) {
   );
 }
 
+function TrophiesScreen({ profile, onBack }) {
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const mr = await fetchMyMatchResults();
+      let hasSpectated = false;
+      try { hasSpectated = localStorage.getItem(LS.SPECTATED) === '1'; } catch {}
+      const s = computeStats(profile.id, mr.results || [], { hasSpectated });
+      if (mounted) { setStats(s); setLoading(false); }
+    })();
+    return () => { mounted = false; };
+  }, [profile.id]);
+
+  const unlockedCount = stats ? BADGES.filter((b) => b.check(stats)).length : 0;
+
+  return (
+    <div className="max-w-md mx-auto px-5 py-8">
+      <button onClick={onBack} className="mb-4 px-4 py-2 rounded-full text-sm clic-press"
+        style={{ background: C.white, color: C.ink, fontWeight: 700,
+                 boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
+        ← Retour
+      </button>
+
+      <h2 className="text-2xl mb-1 text-center"
+          style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+        🏆 Mes trophées
+      </h2>
+
+      {loading ? (
+        <div className="text-center text-sm py-8" style={{ color: C.inkLight, fontWeight: 600 }}>
+          ⏳ Chargement...
+        </div>
+      ) : (
+        <>
+          <p className="text-sm text-center mb-5" style={{ color: C.inkLight, fontWeight: 600 }}>
+            {unlockedCount} / {BADGES.length} débloqués
+          </p>
+
+          {/* Résumé de stats */}
+          <div className="grid grid-cols-3 gap-2 mb-6">
+            {[
+              { label: 'Parties', value: stats.totalGames, emoji: '🎮' },
+              { label: 'Victoires', value: stats.totalWins, emoji: '🏆' },
+              { label: 'Série max', value: stats.bestStreak, emoji: '🔥' },
+            ].map((stat) => (
+              <div key={stat.label} className="rounded-2xl p-3 text-center"
+                   style={{ background: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.05)' }}>
+                <div className="text-2xl">{stat.emoji}</div>
+                <div className="text-xl" style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+                  {stat.value}
+                </div>
+                <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 600 }}>
+                  {stat.label}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Grille de badges */}
+          <div className="grid grid-cols-2 gap-3">
+            {BADGES.map((badge) => {
+              const unlocked = badge.check(stats);
+              return (
+                <div key={badge.id} className="rounded-2xl p-4 text-center"
+                     style={{
+                       background: unlocked ? C.peach : '#F0EDE8',
+                       boxShadow: unlocked ? '0 4px 0 rgba(0,0,0,0.06)' : 'none',
+                       opacity: unlocked ? 1 : 0.6,
+                     }}>
+                  <div className="text-4xl mb-1"
+                       style={{ filter: unlocked ? 'none' : 'grayscale(1)' }}>
+                    {unlocked ? badge.emoji : '🔒'}
+                  </div>
+                  <div className="text-sm"
+                       style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                                color: unlocked ? C.ink : C.inkSoft }}>
+                    {badge.title}
+                  </div>
+                  <div className="text-xs mt-1" style={{ color: C.inkSoft, fontWeight: 600 }}>
+                    {badge.desc}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
                       pendingFriendRequests = 0, friends = [],
                       onQuickInvite,
                       incomingInvites = [], onAcceptInvite, onIgnoreInvite,
-                      toast = null }) {
+                      toast = null, onOpenTrophies = null }) {
   // Ordre des cartes : les jeux jouables en solo en premier (priorité de
   // visibilité), suivis des jeux multi-uniquement. Tant qu'on n'a pas d'IA
   // pour TTT/C4/Pendu/Échecs, ça permet aux enfants seuls de repérer
@@ -2406,7 +2697,7 @@ function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
       )}
 
       {/* Carte avatar centrée (remplace l'ancien gros logo) */}
-      <AvatarCard profile={profile} onEditAvatar={onEditAvatar} onLogout={onLogout} />
+      <AvatarCard profile={profile} onEditAvatar={onEditAvatar} onLogout={onLogout} onOpenTrophies={onOpenTrophies} />
 
       {/* Actions sociales : 2 boutons côte à côte, toujours visibles
           (pas de flicker au montage : on n'attend pas friendCount pour rendre).
@@ -2933,7 +3224,7 @@ const REACTION_PHRASES = [
 ];
 const REACTION_COOLDOWN_MS = 2000;
 
-function ReactionLayer({ roomId, myIndex, players }) {
+function ReactionLayer({ roomId, myIndex, players, isSpectator = false, spectatorPseudo = null }) {
   const [open, setOpen] = useState(false);
   const [incoming, setIncoming] = useState(null);  // { kind, content, by, key }
   const [cooldown, setCooldown] = useState(false);
@@ -2944,9 +3235,14 @@ function ReactionLayer({ roomId, myIndex, players }) {
   useEffect(() => {
     if (!roomId) return;
     const sub = subscribeToReactions(roomId, (reaction) => {
-      // On affiche TOUTES les réactions reçues, y compris... non : on ignore
-      // les siennes (elles sont déjà affichées localement à l'envoi).
-      if (reaction.by === myIndex) return;
+      // On ignore nos propres réactions (déjà affichées localement à l'envoi).
+      // - Joueur : on se reconnaît par l'index (by === myIndex).
+      // - Spectateur (by===2) : plusieurs spectateurs partagent by=2, donc on
+      //   se reconnaît par le pseudo envoyé dans reaction.name.
+      const isMine = isSpectator
+        ? (reaction.by === 2 && reaction.name === spectatorPseudo)
+        : (reaction.by === myIndex && !reaction.name);
+      if (isMine) return;
       showIncoming(reaction);
     });
     channelRef.current = sub.channel;
@@ -2955,7 +3251,7 @@ function ReactionLayer({ roomId, myIndex, players }) {
       channelRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, myIndex]);
+  }, [roomId, myIndex, isSpectator, spectatorPseudo]);
 
   const showIncoming = (reaction) => {
     if (incomingTimer.current) clearTimeout(incomingTimer.current);
@@ -2966,17 +3262,21 @@ function ReactionLayer({ roomId, myIndex, players }) {
 
   const send = async (kind, content) => {
     if (cooldown) return;
-    const reaction = { kind, content, by: myIndex };
+    const reaction = { kind, content, by: myIndex, name: isSpectator ? spectatorPseudo : null };
     await sendReaction(channelRef.current, reaction);
     // Affichage local immédiat (l'autre le verra via broadcast)
-    showIncoming({ ...reaction, by: myIndex });
+    showIncoming(reaction);
     setOpen(false);
     // Cooldown anti-spam
     setCooldown(true);
     setTimeout(() => setCooldown(false), REACTION_COOLDOWN_MS);
   };
 
-  const senderName = (by) => players[by]?.pseudo || (by === 0 ? 'Hôte' : 'Invité');
+  // Nom de l'émetteur : un spectateur a envoyé son pseudo dans reaction.name
+  const senderName = (reaction) => {
+    if (reaction.name) return `👀 ${reaction.name}`;
+    return players[reaction.by]?.pseudo || (reaction.by === 0 ? 'Hôte' : 'Invité');
+  };
 
   return (
     <>
@@ -2990,7 +3290,7 @@ function ReactionLayer({ roomId, myIndex, players }) {
                    style={{ background: C.white, boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
                             maxWidth: 320 }}>
                 <div className="text-xs mb-1" style={{ color: C.inkSoft, fontWeight: 700 }}>
-                  {senderName(incoming.by)}
+                  {senderName(incoming)}
                 </div>
                 <div style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
                               color: C.ink, fontSize: '1.3rem' }}>
@@ -3089,7 +3389,7 @@ function ReactionLayer({ roomId, myIndex, players }) {
   );
 }
 
-function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onChangeGame }) {
+function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onChangeGame, isSpectator = false }) {
   const [currentRoom, setCurrentRoom] = useState(room);
   const [profiles, setProfiles] = useState({});
 
@@ -3187,8 +3487,9 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onC
     : currentRoom.player1_id;
 
   // Mécanisme 1 : écoute le signal "left" sur le channel de signaux
+  // (désactivé pour les spectateurs : ils n'ont pas d'adversaire)
   useEffect(() => {
-    if (!ready || !currentRoom.id) return;
+    if (isSpectator || !ready || !currentRoom.id) return;
     const sub = subscribeToGameSignals(currentRoom.id, (signal) => {
       if (signal.kind === 'left' && signal.byId && signal.byId !== profile.id) {
         setOpponentLeft(true);
@@ -3196,11 +3497,11 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onC
     });
     leaveChannelRef.current = sub.channel;
     return () => { sub.unsubscribe(); leaveChannelRef.current = null; };
-  }, [ready, currentRoom.id, profile.id]);
+  }, [isSpectator, ready, currentRoom.id, profile.id]);
 
   // Mécanisme 2 : filet présence — l'adversaire absent >8s = parti
   useEffect(() => {
-    if (!ready || !opponentId) return;
+    if (isSpectator || !ready || !opponentId) return;
     let timer = null;
     const present = onlineIds.has(opponentId);
     if (!present) {
@@ -3209,7 +3510,7 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onC
       timer = setTimeout(() => setOpponentLeft(true), 8000);
     }
     return () => { if (timer) clearTimeout(timer); };
-  }, [ready, opponentId, onlineIds]);
+  }, [isSpectator, ready, opponentId, onlineIds]);
 
   // Helper : prévenir l'adversaire qu'on part (signal instantané)
   const broadcastLeave = async () => {
@@ -3222,10 +3523,11 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onC
 
   // Wrappers autour de onLeave : on broadcaste AVANT de partir
   const handleLeave = async () => {
-    await broadcastLeave();
-    // On libère immédiatement le statut "occupé" pour que les amis voient
-    // le point repasser au vert sans attendre que le state React se propage.
-    try { setBusy(false); } catch {}
+    if (!isSpectator) {
+      // Un spectateur ne joue pas : pas de signal "left", pas de busy à libérer
+      await broadcastLeave();
+      try { setBusy(false); } catch {}
+    }
     if (onLeave) onLeave();
   };
 
@@ -3265,12 +3567,24 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onC
         <button onClick={handleLeave} className="px-4 py-2 rounded-full text-sm clic-press"
           style={{ background: C.white, color: C.ink, fontWeight: 700,
                    boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
-          ← Quitter
+          {isSpectator ? '← Arrêter de regarder' : '← Quitter'}
         </button>
         {waiting && (
           <WaitingTimer createdAt={currentRoom.created_at} />
         )}
       </div>
+
+      {/* Bandeau spectateur : on regarde, on ne joue pas */}
+      {isSpectator && ready && (
+        <div className="rounded-2xl p-3 mb-4 flex items-center justify-center gap-2"
+             style={{ background: C.lavender, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
+          <span className="text-xl">👀</span>
+          <span style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif',
+                         fontSize: '0.95rem' }}>
+            Tu regardes {player1?.pseudo || 'Joueur 1'} vs {player2?.pseudo || 'Joueur 2'}
+          </span>
+        </div>
+      )}
 
       {/* En-tête du jeu */}
       {!ready && (
@@ -3361,6 +3675,7 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onC
           player2,
           onUpdate: updateCurrent,
           onChangeGame: wrappedChangeGame,
+          isSpectator,
         };
         const gameView = (() => {
           switch (currentRoom.game) {
@@ -3390,8 +3705,10 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onC
             {gameView}
             <ReactionLayer
               roomId={currentRoom.id}
-              myIndex={myIndex}
+              myIndex={isSpectator ? 2 : myIndex}
               players={[player1, player2]}
+              isSpectator={isSpectator}
+              spectatorPseudo={profile.pseudo}
             />
           </>
         );
@@ -3488,6 +3805,45 @@ function useMyTurnEffect(isMyTurn, gameOver = false) {
 //   winner : null | 'draw' | identifiant du gagnant
 //   didIWin : booléen (suis-je le gagnant ?)
 // ============================================================
+// ============================================================
+// HOOK : useRecordResult — enregistre le résultat en fin de partie
+// ------------------------------------------------------------
+// Appelé par chaque jeu. N'enregistre QUE si on est l'hôte (player1) et
+// une seule fois par partie (garde anti-doublon local + UNIQUE(room_id)
+// côté base). winnerIndex : 0 (J1 gagne), 1 (J2 gagne), 'draw', ou null
+// (partie pas finie → ne rien faire).
+// Les spectateurs n'enregistrent jamais (isHost est faux pour eux).
+// ============================================================
+function useRecordResult({ room, isHost, isSpectator, game, winnerIndex }) {
+  const recordedRef = useRef(false);
+  useEffect(() => {
+    if (isSpectator || !isHost) return;
+    if (winnerIndex == null) return;           // partie en cours
+    if (recordedRef.current) return;           // déjà enregistré ce round
+    if (!room?.player1_id || !room?.player2_id) return;
+
+    recordedRef.current = true;
+    let winnerId = null;
+    if (winnerIndex === 0) winnerId = room.player1_id;
+    else if (winnerIndex === 1) winnerId = room.player2_id;
+    // 'draw' → winnerId reste null
+
+    recordMatchResult({
+      roomId: room.id,
+      game,
+      player1Id: room.player1_id,
+      player2Id: room.player2_id,
+      winnerId,
+    }).catch(() => {});
+  }, [room?.id, isHost, isSpectator, game, winnerIndex]);
+
+  // Quand une nouvelle manche commence (winnerIndex repasse à null), on
+  // réarme pour pouvoir enregistrer le prochain résultat (revanche).
+  useEffect(() => {
+    if (winnerIndex == null) recordedRef.current = false;
+  }, [winnerIndex]);
+}
+
 function useGameEndEffects(winner, didIWin) {
   const [lastFiredFor, setLastFiredFor] = useState(null);
   useEffect(() => {
@@ -3541,9 +3897,9 @@ function makeTicTacToeState() {
 // Quand je joue : on update room.state → Supabase notifie l'autre joueur.
 // Quand l'autre joue : on reçoit l'update via le subscribe (déjà actif dans Lobby).
 // ============================================================
-function TicTacToeOnline({ room, profile, player1, player2, onUpdate, onChangeGame }) {
-  // Suis-je player 1 (hôte) ou player 2 (invité) ?
-  const myIndex = room.player1_id === profile.id ? 0 : 1;
+function TicTacToeOnline({ room, profile, player1, player2, onUpdate, onChangeGame, isSpectator = false }) {
+  // Suis-je player 1 (hôte) ou player 2 (invité) ? Spectateur → -1 (ne joue jamais)
+  const myIndex = isSpectator ? -1 : (room.player1_id === profile.id ? 0 : 1);
   const symbols = ['❌', '⭕'];
   const mySymbol = symbols[myIndex];
   const players = [player1, player2];
@@ -3556,6 +3912,11 @@ function TicTacToeOnline({ room, profile, player1, player2, onUpdate, onChangeGa
   const isMyTurn = turn === myIndex && !result;
   useGameEndEffects(result?.winner, result?.winner === mySymbol);
   useMyTurnEffect(isMyTurn, !!result);
+
+  // Enregistrement du résultat (hôte uniquement). winner symbole → index.
+  const ttWinnerIndex = !result ? null
+    : (result.winner === 'draw' ? 'draw' : symbols.indexOf(result.winner));
+  useRecordResult({ room, isHost: myIndex === 0, isSpectator, game: 'morpion', winnerIndex: ttWinnerIndex });
 
   // Quand JE joue un coup
   const playCell = async (i) => {
@@ -3702,8 +4063,8 @@ function makeConnect4State() {
 // PUISSANCE 4 — VERSION ONLINE
 // Même architecture que TicTacToeOnline : state stocké dans room.state.
 // ============================================================
-function Connect4Online({ room, profile, player1, player2, onUpdate, onChangeGame }) {
-  const myIndex = room.player1_id === profile.id ? 0 : 1;
+function Connect4Online({ room, profile, player1, player2, onUpdate, onChangeGame, isSpectator = false }) {
+  const myIndex = isSpectator ? -1 : (room.player1_id === profile.id ? 0 : 1);
   const symbols = ['🔴', '🟡'];
   const colors = [C.pink, '#FFE89E'];
   const mySymbol = symbols[myIndex];
@@ -3715,6 +4076,11 @@ function Connect4Online({ room, profile, player1, player2, onUpdate, onChangeGam
   const isMyTurn = turn === myIndex && !result;
   useGameEndEffects(result?.winner, result?.winner === mySymbol);
   useMyTurnEffect(isMyTurn, !!result);
+
+  // Enregistrement du résultat (hôte uniquement)
+  const c4WinnerIndex = !result ? null
+    : (result.winner === 'draw' ? 'draw' : symbols.indexOf(result.winner));
+  useRecordResult({ room, isHost: myIndex === 0, isSpectator, game: 'connect4', winnerIndex: c4WinnerIndex });
 
   // Lâcher un pion dans une colonne (il tombe en bas)
   const dropPiece = async (col) => {
@@ -3854,8 +4220,8 @@ function makeEchecsState() {
 // ============================================================
 // ÉCHECS ONLINE — composant principal
 // ============================================================
-function EchecsOnline({ room, profile, player1, player2, onUpdate, onChangeGame }) {
-  const myIndex = room.player1_id === profile.id ? 0 : 1;
+function EchecsOnline({ room, profile, player1, player2, onUpdate, onChangeGame, isSpectator = false }) {
+  const myIndex = isSpectator ? -1 : (room.player1_id === profile.id ? 0 : 1);
   const myColor = myIndex === 0 ? 'w' : 'b';     // J1 = blancs, J2 = noirs
   const players = [player1, player2];
 
@@ -3889,11 +4255,15 @@ function EchecsOnline({ room, profile, player1, player2, onUpdate, onChangeGame 
 
   // À qui c'est de jouer ? (selon chess.js)
   const turnColor = game.turn();              // 'w' ou 'b'
-  const isMyTurn = turnColor === myColor && verifiedWinner == null;
+  const isMyTurn = !isSpectator && turnColor === myColor && verifiedWinner == null;
 
   // Effets de fin (sons + confettis) — utilise verifiedWinner, et bonne comparaison index/index
   useGameEndEffects(verifiedWinner, verifiedWinner === myIndex);
   useMyTurnEffect(isMyTurn, verifiedWinner != null);
+
+  // Enregistrement du résultat (hôte uniquement). verifiedWinner est déjà
+  // 0 | 1 | 'draw' | null → format direct attendu par le hook.
+  useRecordResult({ room, isHost: myIndex === 0, isSpectator, game: 'echecs', winnerIndex: verifiedWinner });
 
   // === FONCTION : effectuer un coup ===
   const makeMove = async (from, to) => {
@@ -4180,8 +4550,8 @@ function resolvePenduWord(state) {
 //   - un enfant puisse écrire un mot inapproprié (insulte, nom d'élève...)
 // Les deux clients résolvent le mot localement via resolvePenduWord(state).
 // ============================================================
-function PenduOnline({ room, profile, player1, player2, onUpdate, onChangeGame }) {
-  const myIndex = room.player1_id === profile.id ? 0 : 1;
+function PenduOnline({ room, profile, player1, player2, onUpdate, onChangeGame, isSpectator = false }) {
+  const myIndex = isSpectator ? -1 : (room.player1_id === profile.id ? 0 : 1);
   const isHost = myIndex === 0;
   const players = [player1, player2];
 
@@ -4206,6 +4576,12 @@ function PenduOnline({ room, profile, player1, player2, onUpdate, onChangeGame }
   const penduWinner  = phase === 'win' ? 'guesser' : phase === 'lose' ? 'setter' : null;
   const didIWinPendu = (phase === 'win' && iAmGuesser) || (phase === 'lose' && iAmSetter);
   useGameEndEffects(penduWinner, didIWinPendu);
+
+  // Enregistrement du résultat (hôte uniquement). Le pendu n'a pas de match
+  // nul : soit le devineur trouve (il gagne), soit il échoue (le setter gagne).
+  const penduWinnerIndex = phase === 'win' ? guesserIndex
+    : phase === 'lose' ? setterIndex : null;
+  useRecordResult({ room, isHost: myIndex === 0, isSpectator, game: 'pendu', winnerIndex: penduWinnerIndex });
 
   // Le SETTER du tour choisit un thème → on tire un index au hasard et on passe en phase guessing
   const pickTheme = async (themeId) => {
@@ -4511,8 +4887,8 @@ function makeMathState() {
   };
 }
 
-function MathDuelOnline({ room, profile, player1, player2, onUpdate, onChangeGame }) {
-  const myIndex = room.player1_id === profile.id ? 0 : 1;
+function MathDuelOnline({ room, profile, player1, player2, onUpdate, onChangeGame, isSpectator = false }) {
+  const myIndex = isSpectator ? -1 : (room.player1_id === profile.id ? 0 : 1);
   const isHost = myIndex === 0;
   const players = [player1, player2];
 
@@ -4535,7 +4911,9 @@ function MathDuelOnline({ room, profile, player1, player2, onUpdate, onChangeGam
     : null;
   useGameEndEffects(finalWinner, finalWinner === myIndex);
 
-  // === Hôte choisit un niveau ===
+  // Enregistrement du résultat (hôte uniquement)
+  useRecordResult({ room, isHost: myIndex === 0, isSpectator, game: 'math', winnerIndex: finalWinner });
+
   const pickLevel = async (lvl) => {
     if (!isHost) return;
     const newState = {
@@ -4552,6 +4930,7 @@ function MathDuelOnline({ room, profile, player1, player2, onUpdate, onChangeGam
 
   // === Un joueur tape une réponse ===
   const tapAnswer = async (choice) => {
+    if (isSpectator) return;        // un spectateur ne répond pas
     if (phase !== 'playing') return;
     const q = questions[currentIdx];
     if (!q) return;
@@ -4794,8 +5173,8 @@ function makeGeoState() {
   };
 }
 
-function GeoQuizOnline({ room, profile, player1, player2, onUpdate, onChangeGame }) {
-  const myIndex = room.player1_id === profile.id ? 0 : 1;
+function GeoQuizOnline({ room, profile, player1, player2, onUpdate, onChangeGame, isSpectator = false }) {
+  const myIndex = isSpectator ? -1 : (room.player1_id === profile.id ? 0 : 1);
   const isHost = myIndex === 0;
   const players = [player1, player2];
 
@@ -4816,6 +5195,9 @@ function GeoQuizOnline({ room, profile, player1, player2, onUpdate, onChangeGame
     : null;
   useGameEndEffects(finalWinner, finalWinner === myIndex);
 
+  // Enregistrement du résultat (hôte uniquement)
+  useRecordResult({ room, isHost: myIndex === 0, isSpectator, game: 'geo', winnerIndex: finalWinner });
+
   // === Démarrer la partie (hôte) ===
   const startGame = async () => {
     if (!isHost) return;
@@ -4832,6 +5214,7 @@ function GeoQuizOnline({ room, profile, player1, player2, onUpdate, onChangeGame
 
   // === Un joueur tape une réponse ===
   const tapAnswer = async (choice) => {
+    if (isSpectator) return;        // un spectateur ne répond pas
     if (phase !== 'playing') return;
     const q = questions[currentIdx];
     if (!q) return;
