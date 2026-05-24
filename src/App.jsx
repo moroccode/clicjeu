@@ -1070,6 +1070,28 @@ const GAMES = {
       { icon: '🎓', text: 'En solo : tu apprends en jouant !' },
     ],
   },
+  pfc: {
+    title: 'Pierre Feuille Ciseaux', cardEmoji: '✊✋✌️', headerEmoji: '✊',
+    bg: C.mint, tagline: 'Le plus malin gagne !',
+    objective: 'Choisis en secret, le meilleur de 5 manches l\'emporte.',
+    rules: [
+      { icon: '🤫', text: 'Choisis ton signe en secret' },
+      { icon: '👀', text: 'On révèle en même temps' },
+      { icon: '⚔️', text: 'Pierre bat ciseaux, ciseaux bat feuille, feuille bat pierre' },
+      { icon: '🏆', text: 'Premier à 3 manches gagnées !' },
+    ],
+  },
+  course: {
+    title: 'Course au trésor', cardEmoji: '🎲🏆', headerEmoji: '🎲',
+    bg: C.peach, tagline: 'Le premier au trésor gagne !',
+    objective: 'Lance le dé, avance sur le plateau, attention aux cases pièges !',
+    rules: [
+      { icon: '🎲', text: 'Lance le dé chacun ton tour' },
+      { icon: '⏩', text: 'Certaines cases te font avancer ou reculer' },
+      { icon: '🌟', text: 'D\'autres te téléportent ou te font rejouer' },
+      { icon: '🏆', text: 'Le premier au trésor a gagné !' },
+    ],
+  },
 };
 
 // ============================================================
@@ -1093,8 +1115,8 @@ const BADGES = [
     check: (s) => s.totalGames >= 10 },
   { id: 'veteran',     emoji: '🌟', title: 'Vétéran',           desc: 'Joue 50 parties',
     check: (s) => s.totalGames >= 50 },
-  { id: 'all_games',   emoji: '🎯', title: 'Touche-à-tout',     desc: 'Joue aux 6 jeux',
-    check: (s) => s.distinctGames >= 6 },
+  { id: 'all_games',   emoji: '🎯', title: 'Touche-à-tout',     desc: 'Joue aux 8 jeux',
+    check: (s) => s.distinctGames >= 8 },
   { id: 'champion',    emoji: '👑', title: 'Champion',          desc: 'Gagne 25 parties',
     check: (s) => s.totalWins >= 25 },
   { id: 'social',      emoji: '🤝', title: 'Sociable',          desc: 'Joue avec 3 amis différents',
@@ -3685,6 +3707,8 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onC
             case 'echecs':   return <EchecsOnline    {...gameProps} />;
             case 'math':     return <MathDuelOnline  {...gameProps} />;
             case 'geo':      return <GeoQuizOnline   {...gameProps} />;
+            case 'pfc':      return <PfcOnline       {...gameProps} />;
+            case 'course':   return <CourseOnline    {...gameProps} />;
             default:
               return (
                 <div className="rounded-2xl p-4 text-center" style={{
@@ -4021,6 +4045,598 @@ function TicTacToeOnline({ room, profile, player1, player2, onUpdate, onChangeGa
             </div>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// JEU — PIERRE FEUILLE CISEAUX (PFC) — VERSION ONLINE
+// ------------------------------------------------------------
+// Les 2 joueurs choisissent EN SECRET. Quand les deux ont choisi, on
+// révèle simultanément et on attribue la manche. Premier à 3 manches
+// gagnées remporte le match (best-of-5).
+//
+// Subtilité réseau : le choix de chacun est écrit dans room.state. Tant
+// que l'adversaire n'a pas choisi, on n'affiche PAS son choix (on montre
+// juste "a choisi / réfléchit"). La révélation se fait quand les 2 choix
+// sont présents.
+// ============================================================
+const PFC_SIGNS = [
+  { id: 'rock',     emoji: '✊', label: 'Pierre' },
+  { id: 'paper',    emoji: '✋', label: 'Feuille' },
+  { id: 'scissors', emoji: '✌️', label: 'Ciseaux' },
+];
+const PFC_WIN_TARGET = 3;  // premier à 3 manches gagnées
+
+// Qui gagne la manche ? renvoie 0 (J1), 1 (J2) ou 'draw'.
+// Règle : pierre>ciseaux, ciseaux>feuille, feuille>pierre.
+function pfcRoundWinner(c0, c1) {
+  if (c0 === c1) return 'draw';
+  const beats = { rock: 'scissors', scissors: 'paper', paper: 'rock' };
+  return beats[c0] === c1 ? 0 : 1;
+}
+
+function makePfcState() {
+  return {
+    choices: [null, null],   // choix secret de J1 et J2 pour la manche en cours
+    scores: [0, 0],          // manches gagnées
+    roundNo: 1,
+  };
+}
+
+function PfcOnline({ room, profile, player1, player2, onUpdate, onChangeGame, isSpectator = false }) {
+  const myIndex = isSpectator ? -1 : (room.player1_id === profile.id ? 0 : 1);
+  const players = [player1, player2];
+
+  const state = (room.state && room.state.choices) ? room.state : makePfcState();
+  const { choices, scores, roundNo } = state;
+
+  // Les 2 ont choisi → on révèle cette manche
+  const bothChosen = choices[0] != null && choices[1] != null;
+  const roundWinner = bothChosen ? pfcRoundWinner(choices[0], choices[1]) : null;
+
+  // Match terminé ? (premier à 3)
+  const matchWinner = scores[0] >= PFC_WIN_TARGET ? 0
+    : scores[1] >= PFC_WIN_TARGET ? 1 : null;
+
+  // Effets sonores + enregistrement (seulement à la FIN du match)
+  useGameEndEffects(matchWinner, matchWinner === myIndex);
+  useRecordResult({ room, isHost: myIndex === 0, isSpectator, game: 'pfc', winnerIndex: matchWinner });
+
+  // J'ai déjà choisi pour cette manche ?
+  const myChoice = myIndex >= 0 ? choices[myIndex] : null;
+
+  // === Je choisis un signe (secret) ===
+  const pickSign = async (signId) => {
+    if (isSpectator) return;
+    if (matchWinner != null) return;     // match fini
+    if (myChoice != null) return;        // déjà choisi cette manche
+    if (bothChosen) return;              // manche en cours de révélation
+    const newChoices = [...choices];
+    newChoices[myIndex] = signId;
+    const newState = { ...state, choices: newChoices };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
+
+  // === Manche suivante (hôte uniquement, après révélation) ===
+  const nextRound = async () => {
+    if (myIndex !== 0) return;
+    if (!bothChosen) return;
+    // On crédite le gagnant de la manche
+    let newScores = [...scores];
+    if (roundWinner === 0) newScores[0] += 1;
+    else if (roundWinner === 1) newScores[1] += 1;
+    const newState = {
+      choices: [null, null],
+      scores: newScores,
+      roundNo: roundNo + 1,
+    };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
+
+  // === Rejouer un match complet (hôte) ===
+  const newMatch = async () => {
+    if (myIndex !== 0) return;
+    const newState = makePfcState();
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
+
+  const signOf = (id) => PFC_SIGNS.find((s) => s.id === id);
+
+  // Bannière d'état
+  let banner;
+  if (matchWinner != null) {
+    banner = `🎉 ${players[matchWinner]?.pseudo || 'Joueur'} remporte le match !`;
+  } else if (bothChosen) {
+    if (roundWinner === 'draw') banner = '🤝 Égalité ! Personne ne marque.';
+    else banner = `✨ ${players[roundWinner]?.pseudo || 'Joueur'} gagne la manche !`;
+  } else if (isSpectator) {
+    banner = '👀 Les joueurs choisissent...';
+  } else if (myChoice != null) {
+    banner = `🤫 Tu as choisi ${signOf(myChoice)?.emoji} — on attend ${players[1 - myIndex]?.pseudo || 'l\'autre'}...`;
+  } else {
+    banner = '👇 Choisis ton signe en secret !';
+  }
+
+  return (
+    <div>
+      {/* Scoreboard */}
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        {[0, 1].map((i) => {
+          const isMe = i === myIndex;
+          return (
+            <div key={i} className="p-3 rounded-2xl text-center"
+              style={{
+                background: i === 0 ? C.mint : C.blue,
+                outline: matchWinner === i ? `3px solid ${C.accentPink}` : 'none',
+                outlineOffset: '2px',
+                boxShadow: '0 4px 0 rgba(0,0,0,0.06)',
+              }}>
+              <div className="text-xs" style={{ color: C.inkLight, fontWeight: 700 }}>
+                {players[i]?.pseudo || '...'} {isMe && !isSpectator && '(toi)'}
+              </div>
+              <div className="text-3xl" style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+                {scores[i]}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <Banner text={banner}
+        color={matchWinner != null || (bothChosen && roundWinner !== 'draw') ? '#6BCB77' : C.accentPink}
+        thinking={!isSpectator && myChoice != null && !bothChosen} />
+
+      {/* Zone de révélation : les 2 signes côte à côte */}
+      {bothChosen && (
+        <div className="grid grid-cols-2 gap-3 mb-4 clic-pop">
+          {[0, 1].map((i) => (
+            <div key={i} className="p-4 rounded-2xl text-center"
+              style={{
+                background: C.white,
+                boxShadow: '0 4px 0 rgba(0,0,0,0.08)',
+                outline: roundWinner === i ? `3px solid #6BCB77` : 'none',
+                outlineOffset: '2px',
+              }}>
+              <div style={{ fontSize: '3.5rem', lineHeight: 1 }}>
+                {signOf(choices[i])?.emoji}
+              </div>
+              <div className="text-xs mt-1" style={{ color: C.inkLight, fontWeight: 700 }}>
+                {players[i]?.pseudo || '...'}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Boutons de choix (cachés en révélation et pour spectateur) */}
+      {!bothChosen && matchWinner == null && !isSpectator && (
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          {PFC_SIGNS.map((sign) => {
+            const chosen = myChoice === sign.id;
+            const locked = myChoice != null;
+            return (
+              <button key={sign.id} onClick={() => pickSign(sign.id)}
+                disabled={locked}
+                className="rounded-2xl flex flex-col items-center justify-center py-5 clic-press transition-all"
+                style={{
+                  background: chosen ? C.accentPink : C.white,
+                  boxShadow: '0 4px 0 rgba(0,0,0,0.08)',
+                  opacity: locked && !chosen ? 0.4 : 1,
+                }}>
+                <span style={{ fontSize: '2.5rem', lineHeight: 1 }}>{sign.emoji}</span>
+                <span className="text-xs mt-1"
+                      style={{ color: chosen ? C.white : C.ink, fontWeight: 700,
+                               fontFamily: '"Fredoka", sans-serif' }}>
+                  {sign.label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Pour le spectateur : on montre où en sont les joueurs sans les signes */}
+      {!bothChosen && isSpectator && (
+        <div className="rounded-2xl p-4 text-center mb-4"
+             style={{ background: 'rgba(255,255,255,0.6)', color: C.inkLight, fontWeight: 600 }}>
+          {choices.map((c, i) => (
+            <div key={i} className="text-sm py-1">
+              {players[i]?.pseudo || '...'} : {c != null ? '✅ a choisi' : '🤔 réfléchit...'}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Après une manche révélée (match pas fini) : bouton manche suivante */}
+      {bothChosen && matchWinner == null && (
+        myIndex === 0 ? (
+          <button onClick={nextRound}
+            className="w-full py-3 rounded-2xl clic-press"
+            style={{ background: C.accentPink, color: C.white,
+                     fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                     boxShadow: '0 4px 0 rgba(0,0,0,0.10)' }}>
+            Manche suivante →
+          </button>
+        ) : (
+          <div className="rounded-2xl p-3 text-center text-sm"
+               style={{ background: 'rgba(255,255,255,0.6)', color: C.inkLight, fontWeight: 600 }}>
+            ⏳ {players[0]?.pseudo || 'L\'hôte'} lance la manche suivante...
+          </div>
+        )
+      )}
+
+      {/* Match terminé : rejouer / changer de jeu */}
+      {matchWinner != null && (
+        myIndex === 0 ? (
+          <EndGameActions
+            onRematch={newMatch}
+            onChangeGame={onChangeGame}
+            opponentName={players[1]?.pseudo}
+          />
+        ) : (
+          <div className="rounded-2xl p-3 text-center text-sm"
+               style={{ background: 'rgba(255,255,255,0.6)', color: C.inkLight, fontWeight: 600 }}>
+            ⏳ {players[0]?.pseudo || 'L\'hôte'} va relancer une partie...
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// JEU — COURSE AU TRÉSOR — VERSION ONLINE
+// ------------------------------------------------------------
+// Plateau en ligne de 24 cases (0 = départ, 23 = trésor). À tour de rôle,
+// on lance le dé, le pion avance, et l'effet de la case se déclenche.
+// Premier au trésor gagne.
+//
+// Conception réseau : le joueur qui agit calcule TOUT (dé, déplacement,
+// effet, position finale, à qui le tour suivant) et écrit l'état final.
+// L'autre client anime simplement le pion de l'ancienne à la nouvelle
+// position quand il reçoit la mise à jour. L'animation est purement
+// visuelle et locale (pas stockée en base).
+// ============================================================
+
+// Types de cases et leur effet. Le plateau est FIXE (même pour les 2
+// joueurs) pour que la partie soit lisible et équitable.
+const COURSE_SIZE = 24;
+const COURSE_BOARD = [
+  // 0 = départ
+  'start',
+  'normal', 'forward', 'normal', 'back',
+  'replay', 'normal', 'teleport', 'normal',
+  'skip', 'normal', 'forward', 'normal',
+  'back', 'normal', 'surprise', 'normal',
+  'replay', 'normal', 'back', 'forward',
+  'normal', 'normal',
+  // 23 = trésor
+  'treasure',
+];
+
+const COURSE_CASE_INFO = {
+  start:    { emoji: '🏁', bg: '#D7F5E3', label: 'Départ' },
+  normal:   { emoji: '',   bg: '#FFFFFF', label: '' },
+  forward:  { emoji: '⏩', bg: '#C5DDF5', label: 'Avance de 2' },
+  back:     { emoji: '⏪', bg: '#FFD0D0', label: 'Recule de 3' },
+  replay:   { emoji: '🔄', bg: '#FFE89E', label: 'Rejoue' },
+  skip:     { emoji: '⏸️', bg: '#E0D0F0', label: 'Passe ton tour' },
+  teleport: { emoji: '🌟', bg: '#DCC5F7', label: 'Téléporte +4' },
+  surprise: { emoji: '🎁', bg: '#FFD4B8', label: 'Surprise !' },
+  treasure: { emoji: '🏆', bg: '#FFE89E', label: 'Trésor' },
+};
+
+const COURSE_PAWNS = ['🐱', '🦊'];  // pion J1, pion J2
+
+function makeCourseState() {
+  return {
+    positions: [0, 0],     // case de chaque pion
+    turn: 0,               // à qui de jouer
+    lastRoll: null,        // dernier dé (pour l'afficher)
+    skipNext: [false, false],
+    winner: null,
+    moveSeq: 0,            // incrémente à chaque coup (pour déclencher l'anim)
+    lastEffect: null,      // texte du dernier effet (pour le log)
+  };
+}
+
+// Applique l'effet d'une case. Renvoie { pos, replay, skipOpponent, effectText }.
+function applyCourseEffect(landedPos) {
+  const type = COURSE_BOARD[landedPos];
+  const clamp = (p) => Math.max(0, Math.min(COURSE_SIZE - 1, p));
+  switch (type) {
+    case 'forward':
+      return { pos: clamp(landedPos + 2), replay: false, skipOpponent: false, effectText: '⏩ Avance de 2 !' };
+    case 'back':
+      return { pos: clamp(landedPos - 3), replay: false, skipOpponent: false, effectText: '⏪ Recule de 3 !' };
+    case 'teleport':
+      return { pos: clamp(landedPos + 4), replay: false, skipOpponent: false, effectText: '🌟 Téléportation +4 !' };
+    case 'replay':
+      return { pos: landedPos, replay: true, skipOpponent: false, effectText: '🔄 Rejoue !' };
+    case 'skip':
+      return { pos: landedPos, replay: false, skipOpponent: true, effectText: '⏸️ L\'adversaire passe son tour !' };
+    case 'surprise': {
+      // Effet aléatoire parmi avance/recule/téléporte/rejoue
+      const options = [
+        { pos: clamp(landedPos + 3), effectText: '🎁 Surprise : avance de 3 !' },
+        { pos: clamp(landedPos - 2), effectText: '🎁 Surprise : recule de 2 !' },
+        { pos: clamp(landedPos + 5), effectText: '🎁 Surprise : bond de 5 !' },
+        { pos: landedPos, effectText: '🎁 Surprise : rien du tout 😅' },
+      ];
+      const pick = options[Math.floor(Math.random() * options.length)];
+      return { pos: pick.pos, replay: false, skipOpponent: false, effectText: pick.effectText };
+    }
+    default:
+      return { pos: landedPos, replay: false, skipOpponent: false, effectText: null };
+  }
+}
+
+function CourseOnline({ room, profile, player1, player2, onUpdate, onChangeGame, isSpectator = false }) {
+  const myIndex = isSpectator ? -1 : (room.player1_id === profile.id ? 0 : 1);
+  const players = [player1, player2];
+
+  const state = (room.state && room.state.positions) ? room.state : makeCourseState();
+  const { positions, turn, lastRoll, skipNext, winner, moveSeq, lastEffect } = state;
+
+  const isMyTurn = !isSpectator && turn === myIndex && winner == null;
+
+  // Position animée du pion (purement visuelle). On part des positions du
+  // state et on les rattrape en douceur quand elles changent.
+  const [animPos, setAnimPos] = useState(positions);
+  const [rolling, setRolling] = useState(false);
+  const lastSeqRef = useRef(moveSeq);
+
+  // Quand le state change (nouveau coup), on anime le(s) pion(s) vers la
+  // nouvelle position case par case.
+  useEffect(() => {
+    if (moveSeq === lastSeqRef.current) {
+      // Pas un nouveau coup (montage initial, resync) → on cale directement
+      setAnimPos(positions);
+      return;
+    }
+    lastSeqRef.current = moveSeq;
+
+    // On détecte quel pion a bougé et on l'anime
+    let cancelled = false;
+    (async () => {
+      const start = animPos;
+      const target = positions;
+      // Animation pas-à-pas pour chaque pion qui a changé
+      for (let i = 0; i < 2; i++) {
+        if (start[i] === target[i]) continue;
+        const dir = target[i] > start[i] ? 1 : -1;
+        let cur = start[i];
+        while (cur !== target[i]) {
+          if (cancelled) return;
+          cur += dir;
+          // eslint-disable-next-line no-loop-func
+          setAnimPos((prev) => { const n = [...prev]; n[i] = cur; return n; });
+          playSound('pop');
+          await new Promise((r) => setTimeout(r, 160));
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [moveSeq]);
+
+  useGameEndEffects(winner, winner === myIndex);
+  useRecordResult({ room, isHost: myIndex === 0, isSpectator, game: 'course', winnerIndex: winner });
+
+  // === Lancer le dé ===
+  const rollDie = async () => {
+    if (!isMyTurn || rolling) return;
+    setRolling(true);
+
+    // Petit suspense visuel sur le dé
+    const roll = 1 + Math.floor(Math.random() * 6);
+    await new Promise((r) => setTimeout(r, 350));
+
+    // Etape 1 : avancer du nombre de cases, sans dépasser le trésor
+    let landed = Math.min(positions[myIndex] + roll, COURSE_SIZE - 1);
+
+    // Etape 2 : si on atteint le trésor, victoire immédiate
+    if (landed >= COURSE_SIZE - 1) {
+      const newPositions = [...positions];
+      newPositions[myIndex] = COURSE_SIZE - 1;
+      const newState = {
+        ...state,
+        positions: newPositions,
+        lastRoll: roll,
+        winner: myIndex,
+        moveSeq: moveSeq + 1,
+        lastEffect: '🏆 Trésor atteint !',
+      };
+      onUpdate({ ...room, state: newState });
+      await updateRoomState(room.id, { state: newState });
+      setRolling(false);
+      return;
+    }
+
+    // Etape 3 : appliquer l'effet de la case d'arrivée
+    const eff = applyCourseEffect(landed);
+    const finalPos = eff.pos;
+
+    // Etape 4 : l'effet peut faire atteindre le trésor aussi
+    const reachedTreasure = finalPos >= COURSE_SIZE - 1;
+
+    const newPositions = [...positions];
+    newPositions[myIndex] = reachedTreasure ? COURSE_SIZE - 1 : finalPos;
+
+    // Etape 5 : déterminer le tour suivant
+    let nextTurn = turn;
+    const newSkip = [...skipNext];
+    if (!eff.replay) {
+      // tour à l'adversaire, sauf si on lui a collé un "passe ton tour"
+      nextTurn = 1 - myIndex;
+      if (eff.skipOpponent) {
+        newSkip[1 - myIndex] = true;
+      }
+    }
+    // Si l'adversaire devait déjà passer son tour, on consomme et on revient à moi
+    if (!eff.replay && newSkip[nextTurn]) {
+      newSkip[nextTurn] = false;
+      nextTurn = myIndex;
+    }
+
+    const newState = {
+      ...state,
+      positions: newPositions,
+      turn: reachedTreasure ? turn : nextTurn,
+      lastRoll: roll,
+      skipNext: newSkip,
+      winner: reachedTreasure ? myIndex : null,
+      moveSeq: moveSeq + 1,
+      lastEffect: reachedTreasure ? '🏆 Trésor atteint !' : (eff.effectText || `🎲 ${roll}`),
+    };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+    setRolling(false);
+  };
+
+  // === Rejouer (hôte) ===
+  const newGame = async () => {
+    if (myIndex !== 0) return;
+    const newState = makeCourseState();
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
+
+  // Bannière d'état
+  let banner;
+  if (winner != null) {
+    banner = `🏆 ${players[winner]?.pseudo || 'Joueur'} trouve le trésor !`;
+  } else if (lastEffect && !isMyTurn) {
+    banner = lastEffect;
+  } else if (isSpectator) {
+    banner = `👀 Au tour de ${players[turn]?.pseudo || 'Joueur'}`;
+  } else if (isMyTurn) {
+    banner = skipNext[myIndex] ? '⏸️ Tu passes ton tour...' : '🎲 À toi de lancer le dé !';
+  } else {
+    banner = `⏳ ${players[1 - myIndex]?.pseudo || 'L\'autre'} joue...`;
+  }
+
+  // Construction du plateau en serpentin (6 colonnes) pour tenir sur mobile
+  const COLS = 6;
+  const rows = [];
+  for (let r = 0; r * COLS < COURSE_SIZE; r++) {
+    let rowCells = [];
+    for (let col = 0; col < COLS; col++) {
+      const idx = r * COLS + col;
+      if (idx < COURSE_SIZE) rowCells.push(idx);
+    }
+    // Serpentin : on inverse une ligne sur deux pour un vrai chemin continu
+    if (r % 2 === 1) rowCells = rowCells.reverse();
+    rows.push(rowCells);
+  }
+
+  return (
+    <div>
+      {/* Scoreboard : position de chaque joueur */}
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        {[0, 1].map((i) => {
+          const isActive = turn === i && winner == null;
+          const isMe = i === myIndex;
+          return (
+            <div key={i} className="p-3 rounded-2xl text-center"
+              style={{
+                background: i === 0 ? C.peach : C.lavender,
+                outline: isActive ? `3px solid ${C.accentPink}` : 'none',
+                outlineOffset: '2px',
+                boxShadow: '0 4px 0 rgba(0,0,0,0.06)',
+              }}>
+              <div className="text-xs" style={{ color: C.inkLight, fontWeight: 700 }}>
+                {COURSE_PAWNS[i]} {players[i]?.pseudo || '...'} {isMe && !isSpectator && '(toi)'}
+              </div>
+              <div className="text-sm" style={{ color: C.ink, fontWeight: 700 }}>
+                Case {animPos[i]} / {COURSE_SIZE - 1}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <Banner text={banner}
+        color={winner != null ? '#6BCB77' : C.accentPink}
+        thinking={!isMyTurn && winner == null && !isSpectator} />
+
+      {/* Plateau en serpentin */}
+      <div className="rounded-3xl p-3 mb-4" style={{ background: C.cream, boxShadow: '0 4px 0 rgba(0,0,0,0.06)' }}>
+        {rows.map((rowCells, ri) => (
+          <div key={ri} className="grid mb-1" style={{ gridTemplateColumns: `repeat(${COLS}, 1fr)`, gap: 4 }}>
+            {rowCells.map((idx) => {
+              const type = COURSE_BOARD[idx];
+              const info = COURSE_CASE_INFO[type];
+              const here = [0, 1].filter((p) => animPos[p] === idx);
+              return (
+                <div key={idx} className="relative rounded-xl flex items-center justify-center"
+                  style={{
+                    aspectRatio: '1 / 1',
+                    background: info.bg,
+                    border: here.length ? `2px solid ${C.accentPink}` : '1px solid rgba(0,0,0,0.06)',
+                    fontSize: '1.1rem',
+                  }}>
+                  {/* Emoji de la case (effet) en fond */}
+                  {info.emoji && (
+                    <span style={{ opacity: here.length ? 0.3 : 0.85 }}>{info.emoji}</span>
+                  )}
+                  {/* Pions présents sur la case */}
+                  {here.length > 0 && (
+                    <div className="absolute inset-0 flex items-center justify-center"
+                         style={{ fontSize: here.length > 1 ? '0.95rem' : '1.4rem' }}>
+                      {here.map((p) => COURSE_PAWNS[p]).join('')}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+
+      {/* Dé + bouton lancer */}
+      {winner == null && !isSpectator && (
+        <button onClick={rollDie}
+          disabled={!isMyTurn || rolling}
+          className="w-full py-4 rounded-2xl clic-press flex items-center justify-center gap-3"
+          style={{
+            background: isMyTurn && !rolling ? C.accentPink : '#E0DAD2',
+            color: isMyTurn && !rolling ? C.white : C.inkSoft,
+            fontFamily: '"Fredoka", sans-serif', fontWeight: 700, fontSize: '1.1rem',
+            boxShadow: '0 4px 0 rgba(0,0,0,0.10)',
+          }}>
+          <span style={{ fontSize: '1.6rem' }}>🎲</span>
+          {rolling ? 'Lancement...' : lastRoll && isMyTurn ? `Lancer (dernier : ${lastRoll})` : 'Lancer le dé'}
+        </button>
+      )}
+
+      {/* Spectateur : juste le dernier dé */}
+      {winner == null && isSpectator && lastRoll && (
+        <div className="rounded-2xl p-3 text-center text-sm"
+             style={{ background: 'rgba(255,255,255,0.6)', color: C.inkLight, fontWeight: 600 }}>
+          🎲 Dernier lancer : {lastRoll}
+        </div>
+      )}
+
+      {/* Fin de partie */}
+      {winner != null && (
+        myIndex === 0 ? (
+          <EndGameActions
+            onRematch={newGame}
+            onChangeGame={onChangeGame}
+            opponentName={players[1]?.pseudo}
+          />
+        ) : (
+          <div className="rounded-2xl p-3 text-center text-sm"
+               style={{ background: 'rgba(255,255,255,0.6)', color: C.inkLight, fontWeight: 600 }}>
+            ⏳ {players[0]?.pseudo || 'L\'hôte'} va relancer une partie...
+          </div>
+        )
       )}
     </div>
   );
