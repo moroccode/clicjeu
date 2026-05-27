@@ -4384,30 +4384,42 @@ function PfcOnline({ room, profile, player1, player2, onUpdate, onChangeGame, is
 
 // Types de cases et leur effet. Le plateau est FIXE (même pour les 2
 // joueurs) pour que la partie soit lisible et équitable.
-const COURSE_SIZE = 24;
-const COURSE_BOARD = [
-  // 0 = départ
-  'start',
-  'normal', 'forward', 'normal', 'back',
-  'replay', 'normal', 'teleport', 'normal',
-  'skip', 'normal', 'forward', 'normal',
-  'back', 'normal', 'surprise', 'normal',
-  'replay', 'normal', 'back', 'forward',
-  'normal', 'normal',
-  // 23 = trésor
-  'treasure',
-];
+const COURSE_SIZE = 48;
+
+// Plateau de 48 cases (0 = départ, 47 = trésor). Chaque case a un "type"
+// qui déclenche un petit effet. Les échelles 🪜 et serpents 🐍 sont gérés
+// à part (ce sont des paires départ→arrivée, voir COURSE_LADDERS/SNAKES).
+const COURSE_BOARD = (() => {
+  const b = new Array(COURSE_SIZE).fill('normal');
+  b[0] = 'start';
+  b[COURSE_SIZE - 1] = 'treasure';
+  // Cases à effet réparties sur le parcours
+  const place = (idx, type) => { if (idx > 0 && idx < COURSE_SIZE - 1) b[idx] = type; };
+  place(3, 'forward');   place(7, 'replay');    place(11, 'back');
+  place(15, 'surprise'); place(19, 'forward');  place(23, 'skip');
+  place(27, 'teleport'); place(31, 'back');     place(35, 'surprise');
+  place(39, 'replay');   place(43, 'forward');  place(45, 'back');
+  // Cases étoiles à ramasser
+  [5, 13, 21, 29, 37, 44].forEach((i) => place(i, 'star'));
+  return b;
+})();
+
+// Échelles : { caseDépart: caseArrivée } — on monte (arrivée > départ)
+const COURSE_LADDERS = { 4: 14, 9: 18, 22: 33, 28: 40 };
+// Serpents : { caseTête: caseQueue } — on descend (queue < tête)
+const COURSE_SNAKES  = { 17: 6, 25: 12, 34: 20, 42: 30 };
 
 const COURSE_CASE_INFO = {
-  start:    { emoji: '🏁', bg: '#D7F5E3', label: 'Départ' },
-  normal:   { emoji: '',   bg: '#FFFFFF', label: '' },
-  forward:  { emoji: '⏩', bg: '#C5DDF5', label: 'Avance de 2' },
-  back:     { emoji: '⏪', bg: '#FFD0D0', label: 'Recule de 3' },
-  replay:   { emoji: '🔄', bg: '#FFE89E', label: 'Rejoue' },
-  skip:     { emoji: '⏸️', bg: '#E0D0F0', label: 'Passe ton tour' },
-  teleport: { emoji: '🌟', bg: '#DCC5F7', label: 'Téléporte +4' },
-  surprise: { emoji: '🎁', bg: '#FFD4B8', label: 'Surprise !' },
-  treasure: { emoji: '🏆', bg: '#FFE89E', label: 'Trésor' },
+  start:    { emoji: '🏁', bg: '#D7F5E3' },
+  normal:   { emoji: '',   bg: '#FFFFFF' },
+  forward:  { emoji: '⏩', bg: '#C5DDF5' },
+  back:     { emoji: '⏪', bg: '#FFD0D0' },
+  replay:   { emoji: '🔄', bg: '#FFE89E' },
+  skip:     { emoji: '⏸️', bg: '#E0D0F0' },
+  teleport: { emoji: '🌟', bg: '#DCC5F7' },
+  surprise: { emoji: '🎁', bg: '#FFD4B8' },
+  star:     { emoji: '⭐', bg: '#FFF3C4' },
+  treasure: { emoji: '🏆', bg: '#FFE89E' },
 };
 
 const COURSE_PAWNS = ['🐱', '🦊'];  // pion J1, pion J2
@@ -4416,6 +4428,7 @@ const COURSE_DICE_FACES = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];  // in
 function makeCourseState() {
   return {
     positions: [0, 0],     // case de chaque pion
+    stars: [0, 0],         // étoiles ramassées par chaque joueur
     turn: 0,               // à qui de jouer
     lastRoll: null,        // dernier dé (pour l'afficher)
     lastActor: null,       // qui a lancé le dernier dé (0 | 1)
@@ -4426,34 +4439,47 @@ function makeCourseState() {
   };
 }
 
-// Applique l'effet d'une case. Renvoie { pos, replay, skipOpponent, effectText }.
+// Applique l'effet d'une case. Renvoie { pos, replay, skipOpponent, star, effectText }.
+// Les échelles/serpents sont gérés ici aussi (ils priment sur le type de case).
 function applyCourseEffect(landedPos) {
-  const type = COURSE_BOARD[landedPos];
   const clamp = (p) => Math.max(0, Math.min(COURSE_SIZE - 1, p));
+  const base = { pos: landedPos, replay: false, skipOpponent: false, star: false, effectText: null };
+
+  // Échelle : on grimpe
+  if (COURSE_LADDERS[landedPos] != null) {
+    return { ...base, pos: COURSE_LADDERS[landedPos], effectText: '🪜 Échelle ! Tu grimpes tout en haut !' };
+  }
+  // Serpent : on glisse
+  if (COURSE_SNAKES[landedPos] != null) {
+    return { ...base, pos: COURSE_SNAKES[landedPos], effectText: '🐍 Serpent ! Tu glisses en arrière...' };
+  }
+
+  const type = COURSE_BOARD[landedPos];
   switch (type) {
     case 'forward':
-      return { pos: clamp(landedPos + 2), replay: false, skipOpponent: false, effectText: '⏩ Avance de 2 !' };
+      return { ...base, pos: clamp(landedPos + 2), effectText: '⏩ Avance de 2 !' };
     case 'back':
-      return { pos: clamp(landedPos - 3), replay: false, skipOpponent: false, effectText: '⏪ Recule de 3 !' };
+      return { ...base, pos: clamp(landedPos - 3), effectText: '⏪ Recule de 3 !' };
     case 'teleport':
-      return { pos: clamp(landedPos + 4), replay: false, skipOpponent: false, effectText: '🌟 Téléportation +4 !' };
+      return { ...base, pos: clamp(landedPos + 4), effectText: '🌟 Téléportation +4 !' };
     case 'replay':
-      return { pos: landedPos, replay: true, skipOpponent: false, effectText: '🔄 Rejoue !' };
+      return { ...base, replay: true, effectText: '🔄 Rejoue !' };
     case 'skip':
-      return { pos: landedPos, replay: false, skipOpponent: true, effectText: '⏸️ L\'adversaire passe son tour !' };
+      return { ...base, skipOpponent: true, effectText: '⏸️ L\'adversaire passe son tour !' };
+    case 'star':
+      return { ...base, star: true, effectText: '⭐ Étoile ramassée !' };
     case 'surprise': {
-      // Effet aléatoire parmi avance/recule/téléporte/rejoue
       const options = [
         { pos: clamp(landedPos + 3), effectText: '🎁 Surprise : avance de 3 !' },
         { pos: clamp(landedPos - 2), effectText: '🎁 Surprise : recule de 2 !' },
         { pos: clamp(landedPos + 5), effectText: '🎁 Surprise : bond de 5 !' },
-        { pos: landedPos, effectText: '🎁 Surprise : rien du tout 😅' },
+        { pos: landedPos, star: true, effectText: '🎁 Surprise : une étoile ⭐ !' },
       ];
       const pick = options[Math.floor(Math.random() * options.length)];
-      return { pos: pick.pos, replay: false, skipOpponent: false, effectText: pick.effectText };
+      return { ...base, pos: pick.pos, star: !!pick.star, effectText: pick.effectText };
     }
     default:
-      return { pos: landedPos, replay: false, skipOpponent: false, effectText: null };
+      return base;
   }
 }
 
@@ -4463,6 +4489,7 @@ function CourseOnline({ room, profile, player1, player2, onUpdate, onChangeGame,
 
   const state = (room.state && room.state.positions) ? room.state : makeCourseState();
   const { positions, turn, lastRoll, lastActor, skipNext, winner, moveSeq, lastEffect } = state;
+  const stars = state.stars || [0, 0];   // compat anciennes parties sans étoiles
 
   const isMyTurn = !isSpectator && turn === myIndex && winner == null;
 
@@ -4569,9 +4596,14 @@ function CourseOnline({ room, profile, player1, player2, onUpdate, onChangeGame,
       nextTurn = myIndex;
     }
 
+    // Étoile ramassée ?
+    const newStars = [...stars];
+    if (eff.star) newStars[myIndex] += 1;
+
     const newState = {
       ...state,
       positions: newPositions,
+      stars: newStars,
       turn: reachedTreasure ? turn : nextTurn,
       lastRoll: roll,
       lastActor: myIndex,
@@ -4641,12 +4673,16 @@ function CourseOnline({ room, profile, player1, player2, onUpdate, onChangeGame,
             <div className="flex flex-col gap-2 mb-4">
               {[
                 { e: '🎲', t: 'Chacun son tour, lance le dé pour avancer.' },
+                { e: '🪜', t: 'Échelle : tu grimpes d\'un coup tout en haut !' },
+                { e: '🐍', t: 'Serpent : tu glisses en arrière... attention !' },
+                { e: '⭐', t: 'Étoile : ramasse-la en passant, collectionne-les !' },
                 { e: '⏩', t: 'Case bleue : avance de 2 cases.' },
                 { e: '⏪', t: 'Case rose : recule de 3 cases.' },
                 { e: '🔄', t: 'Case jaune : tu rejoues tout de suite !' },
                 { e: '⏸️', t: 'Case violette : ton adversaire passe son tour.' },
-                { e: '🌟', t: 'Étoile : téléporte-toi 4 cases plus loin.' },
+                { e: '🌟', t: 'Téléporteur : bond de 4 cases en avant.' },
                 { e: '🎁', t: 'Cadeau : une surprise au hasard !' },
+                { e: '🏆', t: 'Le premier au trésor a gagné !' },
               ].map((r, i) => (
                 <div key={i} className="flex items-center gap-2 p-2 rounded-xl" style={{ background: C.cream }}>
                   <span className="text-xl" style={{ flexShrink: 0 }}>{r.e}</span>
@@ -4695,6 +4731,9 @@ function CourseOnline({ room, profile, player1, player2, onUpdate, onChangeGame,
               <div className="text-sm" style={{ color: C.ink, fontWeight: 700 }}>
                 Case {animPos[i]} / {COURSE_SIZE - 1}
               </div>
+              <div className="text-xs" style={{ color: C.inkLight, fontWeight: 700 }}>
+                ⭐ {stars[i]}
+              </div>
             </div>
           );
         })}
@@ -4733,22 +4772,42 @@ function CourseOnline({ room, profile, player1, player2, onUpdate, onChangeGame,
               const type = COURSE_BOARD[idx];
               const info = COURSE_CASE_INFO[type];
               const here = [0, 1].filter((p) => animPos[p] === idx);
+              // Échelle / serpent partant de cette case ?
+              const ladderTo = COURSE_LADDERS[idx];
+              const snakeTo = COURSE_SNAKES[idx];
+              const special = ladderTo != null ? { emoji: '🪜', bg: '#D7F5E3', to: ladderTo }
+                : snakeTo != null ? { emoji: '🐍', bg: '#FFE0E0', to: snakeTo }
+                : null;
+              const cellBg = special ? special.bg : info.bg;
+              const cellEmoji = special ? special.emoji : info.emoji;
               return (
                 <div key={idx} className="relative rounded-xl flex items-center justify-center"
                   style={{
                     aspectRatio: '1 / 1',
-                    background: info.bg,
+                    background: cellBg,
                     border: here.length ? `2px solid ${C.accentPink}` : '1px solid rgba(0,0,0,0.06)',
-                    fontSize: '1.1rem',
+                    fontSize: '1rem',
                   }}>
-                  {/* Emoji de la case (effet) en fond */}
-                  {info.emoji && (
-                    <span style={{ opacity: here.length ? 0.3 : 0.85 }}>{info.emoji}</span>
+                  {/* Numéro de case discret en haut à gauche */}
+                  <span style={{ position: 'absolute', top: 1, left: 3, fontSize: '0.5rem',
+                                 color: C.inkSoft, fontWeight: 700 }}>
+                    {idx}
+                  </span>
+                  {/* Emoji de la case (effet / échelle / serpent) */}
+                  {cellEmoji && (
+                    <span style={{ opacity: here.length ? 0.3 : 0.9 }}>{cellEmoji}</span>
+                  )}
+                  {/* Destination d'une échelle/serpent (petit numéro) */}
+                  {special && !here.length && (
+                    <span style={{ position: 'absolute', bottom: 1, right: 3, fontSize: '0.5rem',
+                                   color: ladderTo != null ? '#3A9B6B' : '#C44', fontWeight: 700 }}>
+                      →{special.to}
+                    </span>
                   )}
                   {/* Pions présents sur la case */}
                   {here.length > 0 && (
                     <div className="absolute inset-0 flex items-center justify-center"
-                         style={{ fontSize: here.length > 1 ? '0.95rem' : '1.4rem' }}>
+                         style={{ fontSize: here.length > 1 ? '0.85rem' : '1.3rem' }}>
                       {here.map((p) => COURSE_PAWNS[p]).join('')}
                     </div>
                   )}
