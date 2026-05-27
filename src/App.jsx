@@ -17,6 +17,7 @@ import { tap, playSound, vibrate, launchConfetti,
 import { startPresence, stopPresence, subscribePresence, setBusy } from './presence';
 import WORDS_JSON from './words.json';
 import COUNTRIES_JSON from './countries.json';
+import CULTURE_JSON from './culture.json';
 
 // ============================================================
 // CLICJEU v6 — Auth pseudo + PIN BRANCHÉE SUR SUPABASE
@@ -1092,6 +1093,28 @@ const GAMES = {
       { icon: '🏆', text: 'Le premier au trésor a gagné !' },
     ],
   },
+  culture: {
+    title: 'Culture G', cardEmoji: '🧠💡', headerEmoji: '🧠',
+    bg: C.blue, tagline: 'Le plus malin gagne !',
+    objective: 'Réponds à des questions de culture générale plus vite que ton adversaire.',
+    rules: [
+      { icon: '🧠', text: '10 questions de culture générale' },
+      { icon: '⚡', text: 'Le 1er à toucher la bonne réponse marque' },
+      { icon: '🌍', text: 'Histoire, sciences, géo, sport, et plus !' },
+      { icon: '🏆', text: 'Le meilleur score sur 10 gagne' },
+    ],
+  },
+  motsmeles: {
+    title: 'Mots Mêlés', cardEmoji: '🔤🔍', headerEmoji: '🔤',
+    bg: C.mint, tagline: 'Trouve les mots cachés !',
+    objective: 'Repère les mots cachés dans la grille de lettres avant ton adversaire.',
+    rules: [
+      { icon: '🔍', text: '6 mots sont cachés dans la grille' },
+      { icon: '👆', text: 'Touche la 1re puis la dernière lettre du mot' },
+      { icon: '↔️', text: 'Les mots sont en ligne, colonne ou diagonale' },
+      { icon: '🏆', text: 'Le plus de mots trouvés gagne !' },
+    ],
+  },
 };
 
 // ============================================================
@@ -1115,8 +1138,8 @@ const BADGES = [
     check: (s) => s.totalGames >= 10 },
   { id: 'veteran',     emoji: '🌟', title: 'Vétéran',           desc: 'Joue 50 parties',
     check: (s) => s.totalGames >= 50 },
-  { id: 'all_games',   emoji: '🎯', title: 'Touche-à-tout',     desc: 'Joue aux 8 jeux',
-    check: (s) => s.distinctGames >= 8 },
+  { id: 'all_games',   emoji: '🎯', title: 'Touche-à-tout',     desc: 'Joue aux 9 jeux',
+    check: (s) => s.distinctGames >= 9 },
   { id: 'champion',    emoji: '👑', title: 'Champion',          desc: 'Gagne 25 parties',
     check: (s) => s.totalWins >= 25 },
   { id: 'social',      emoji: '🤝', title: 'Sociable',          desc: 'Joue avec 3 amis différents',
@@ -3788,6 +3811,8 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onC
             case 'geo':      return <GeoQuizOnline   {...gameProps} />;
             case 'pfc':      return <PfcOnline       {...gameProps} />;
             case 'course':   return <CourseOnline    {...gameProps} />;
+            case 'culture':  return <CultureGOnline  {...gameProps} />;
+            case 'motsmeles': return <MotsMelesOnline {...gameProps} />;
             default:
               return (
                 <div className="rounded-2xl p-4 text-center" style={{
@@ -6245,6 +6270,716 @@ function GeoQuizOnline({ room, profile, player1, player2, onUpdate, onChangeGame
             </button>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// JEU — CULTURE G — VERSION ONLINE (10-12 ans)
+// ------------------------------------------------------------
+// Quiz QCM calqué sur Géo Quiz : 10 questions tirées au hasard dans la
+// banque culture.json (~100 questions, plusieurs catégories). Le 1er à
+// toucher la bonne réponse marque. Meilleur score sur 10 gagne.
+// ============================================================
+
+// Mélange un tableau (Fisher-Yates) sans modifier l'original
+function cultureShuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// Tire `count` questions au hasard, avec leurs choix mélangés.
+function makeCultureQuestions(count = 10) {
+  const picked = cultureShuffle(CULTURE_JSON).slice(0, count);
+  return picked.map((item) => ({
+    promptLabel: item.cat,
+    prompt: item.q,
+    choices: cultureShuffle(item.choices),
+    answer: item.answer,
+  }));
+}
+
+function makeCultureState() {
+  return {
+    phase: 'ready',      // 'ready' | 'playing' | 'done'
+    questions: [],
+    currentIdx: 0,
+    scores: [0, 0],
+    lastTapBy: null,
+    round: 1,
+  };
+}
+
+function CultureGOnline({ room, profile, player1, player2, onUpdate, onChangeGame, isSpectator = false }) {
+  const myIndex = isSpectator ? -1 : (room.player1_id === profile.id ? 0 : 1);
+  const isHost = myIndex === 0;
+  const players = [player1, player2];
+
+  const state = (room.state && room.state.phase) ? room.state : makeCultureState();
+  const { phase, questions, currentIdx, scores } = state;
+
+  const [wrongTap, setWrongTap] = useState(null);
+  useEffect(() => {
+    if (wrongTap == null) return;
+    const t = setTimeout(() => setWrongTap(null), 400);
+    return () => clearTimeout(t);
+  }, [wrongTap]);
+
+  const finalWinner = phase === 'done'
+    ? (scores[0] > scores[1] ? 0 : scores[1] > scores[0] ? 1 : 'draw')
+    : null;
+  useGameEndEffects(finalWinner, finalWinner === myIndex);
+  useRecordResult({ room, isHost: myIndex === 0, isSpectator, game: 'culture', winnerIndex: finalWinner });
+
+  // === Démarrer (hôte) ===
+  const startGame = async () => {
+    if (!isHost) return;
+    const newState = {
+      ...state,
+      phase: 'playing',
+      questions: makeCultureQuestions(10),
+      currentIdx: 0,
+      scores: [0, 0],
+    };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
+
+  // === Un joueur tape une réponse ===
+  const tapAnswer = async (choice) => {
+    if (isSpectator) return;
+    if (phase !== 'playing') return;
+    const q = questions[currentIdx];
+    if (!q) return;
+    if (choice !== q.answer) {
+      setWrongTap(choice);
+      playSound('pop');
+      vibrate(30);
+      return;
+    }
+    playSound('pop');
+    vibrate(50);
+    const newScores = [...scores];
+    newScores[myIndex] += 1;
+    const nextIdx = currentIdx + 1;
+    const newState = {
+      ...state,
+      scores: newScores,
+      currentIdx: nextIdx,
+      lastTapBy: myIndex,
+      phase: nextIdx >= questions.length ? 'done' : 'playing',
+    };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
+
+  // === Revanche (hôte) ===
+  const newGame = async () => {
+    if (!isHost) return;
+    const newState = {
+      ...makeCultureState(),
+      phase: 'playing',
+      questions: makeCultureQuestions(10),
+      round: (state.round || 1) + 1,
+    };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
+
+  // === ÉCRAN 1 : prêt ===
+  if (phase === 'ready') {
+    if (isHost) {
+      return (
+        <div className="rounded-3xl p-6 text-center"
+             style={{ background: C.blue, boxShadow: '0 6px 0 rgba(0,0,0,0.08)' }}>
+          <div className="text-6xl mb-3">🧠</div>
+          <h3 className="text-2xl mb-2"
+              style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+            Culture G
+          </h3>
+          <p className="text-sm mb-5" style={{ color: C.inkLight, fontWeight: 600 }}>
+            10 questions de culture générale.
+            <br />Le 1er à toucher la bonne réponse marque !
+          </p>
+          <button onClick={startGame} className="px-6 py-3 rounded-2xl clic-press"
+            style={{ background: C.accentPink, color: C.white,
+                     fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                     fontSize: '1.05rem', boxShadow: '0 4px 0 rgba(0,0,0,0.10)' }}>
+            🚀 Commencer la partie
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="rounded-3xl p-8 text-center"
+           style={{ background: C.blue, boxShadow: '0 6px 0 rgba(0,0,0,0.08)' }}>
+        <div className="text-6xl mb-3">⏳</div>
+        <h3 className="text-2xl mb-2"
+            style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+          En attente...
+        </h3>
+        <p style={{ color: C.inkLight, fontWeight: 600 }}>
+          {players[0]?.pseudo || 'L\'hôte'} lance la partie.
+        </p>
+      </div>
+    );
+  }
+
+  // === ÉCRAN 2 : résultat final ===
+  if (phase === 'done') {
+    const isDraw = finalWinner === 'draw';
+    const isMyWin = finalWinner === myIndex;
+    const opponentForChange = isHost ? players[1] : players[0];
+    return (
+      <div className="rounded-3xl p-6 text-center" style={{
+        background: isDraw ? C.lavender : (isMyWin ? C.mint : C.pink),
+        boxShadow: '0 6px 0 rgba(0,0,0,0.08)',
+      }}>
+        <div className="text-6xl mb-3">
+          <span className="clic-celebrate">{isDraw ? '🤝' : (isMyWin ? '🎉' : '😢')}</span>
+        </div>
+        <h3 className="text-3xl mb-3"
+            style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+          {isDraw ? 'Égalité !' : `${players[finalWinner]?.pseudo || 'Joueur'} gagne !`}
+        </h3>
+        <div className="flex items-center justify-around mb-4">
+          <div className="text-center">
+            <div className="text-2xl mb-1">{players[0]?.avatar || '👤'}</div>
+            <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 600 }}>
+              {players[0]?.pseudo || 'Hôte'}
+            </div>
+            <div className="text-3xl" style={{ fontFamily: '"Fredoka", sans-serif',
+                                                 fontWeight: 700, color: C.ink }}>
+              {scores[0]}
+            </div>
+          </div>
+          <div className="text-2xl" style={{ color: C.inkSoft }}>vs</div>
+          <div className="text-center">
+            <div className="text-2xl mb-1">{players[1]?.avatar || '👤'}</div>
+            <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 600 }}>
+              {players[1]?.pseudo || 'Invité'}
+            </div>
+            <div className="text-3xl" style={{ fontFamily: '"Fredoka", sans-serif',
+                                                 fontWeight: 700, color: C.ink }}>
+              {scores[1]}
+            </div>
+          </div>
+        </div>
+        {isHost ? (
+          <EndGameActions
+            onRematch={newGame}
+            onChangeGame={onChangeGame}
+            opponentName={opponentForChange?.pseudo}
+          />
+        ) : (
+          <div className="text-sm" style={{ color: C.inkLight, fontWeight: 600 }}>
+            ⏳ {players[0]?.pseudo || 'L\'hôte'} va relancer...
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // === ÉCRAN 3 : jeu en cours ===
+  const q = questions[currentIdx];
+  if (!q) return null;
+
+  return (
+    <div>
+      {/* Score live */}
+      <div className="rounded-2xl p-3 mb-3 flex items-center justify-around"
+           style={{ background: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
+        <div className="text-center">
+          <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 700 }}>
+            {players[0]?.pseudo || 'Hôte'}
+          </div>
+          <div className="text-2xl" style={{ fontFamily: '"Fredoka", sans-serif',
+                                               fontWeight: 700,
+                                               color: myIndex === 0 ? C.accentPink : C.ink }}>
+            {scores[0]}
+          </div>
+        </div>
+        <div className="text-sm" style={{ color: C.ink, fontWeight: 700 }}>
+          {currentIdx + 1} / {questions.length}
+        </div>
+        <div className="text-center">
+          <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 700 }}>
+            {players[1]?.pseudo || 'Invité'}
+          </div>
+          <div className="text-2xl" style={{ fontFamily: '"Fredoka", sans-serif',
+                                               fontWeight: 700,
+                                               color: myIndex === 1 ? C.accentPink : C.ink }}>
+            {scores[1]}
+          </div>
+        </div>
+      </div>
+
+      {/* Question */}
+      <div className="rounded-3xl p-5 mb-4 text-center"
+           style={{ background: C.cream, boxShadow: '0 4px 0 rgba(0,0,0,0.08)' }}>
+        <div className="text-xs mb-2 inline-block px-3 py-1 rounded-full"
+             style={{ background: C.blue, color: C.ink, fontWeight: 700 }}>
+          {q.promptLabel}
+        </div>
+        <div style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                      color: C.ink, fontSize: '1.25rem', lineHeight: 1.25 }}>
+          {q.prompt}
+        </div>
+      </div>
+
+      {/* 4 réponses */}
+      <div className="flex flex-col gap-3">
+        {q.choices.map((c, i) => {
+          const isWrong = wrongTap === c;
+          return (
+            <button key={i} onClick={() => tapAnswer(c)}
+              className="rounded-2xl px-4 py-4 clic-press text-left"
+              style={{
+                background: isWrong ? '#FFD0D0' : C.white,
+                color: C.ink,
+                fontFamily: '"Fredoka", sans-serif',
+                fontWeight: 700, fontSize: '1.05rem',
+                boxShadow: isWrong ? '0 3px 0 rgba(200,0,0,0.2)' : '0 4px 0 rgba(0,0,0,0.08)',
+                transition: 'background 0.2s',
+              }}>
+              {c}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// JEU — MOTS MÊLÉS — VERSION ONLINE (10-12 ans)
+// ------------------------------------------------------------
+// Grille 8×8 de lettres où 6 mots sont cachés (horizontal, vertical,
+// diagonal). Les 2 joueurs voient la MÊME grille. Pour prendre un mot :
+// toucher sa 1re lettre puis sa dernière lettre. Si les 2 cases forment
+// une ligne droite correspondant à un mot caché non encore trouvé, le mot
+// est crédité au joueur. Le plus de mots trouvés gagne.
+//
+// L'hôte génère la grille (placements stockés dans room.state) pour que
+// les 2 joueurs aient exactement la même.
+// ============================================================
+const MM_GRID = 8;          // grille 8×8
+const MM_WORD_COUNT = 6;    // 6 mots cachés
+const MM_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+// Retire les accents et met en majuscules (grille sans accents)
+function mmNormalize(w) {
+  return w.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/ç/gi, 'c').replace(/[^a-zA-Z]/g, '').toUpperCase();
+}
+
+// 8 directions possibles (on en utilise un sous-ensemble lisible)
+const MM_DIRS = [
+  { dr: 0, dc: 1 },   // horizontal →
+  { dr: 1, dc: 0 },   // vertical ↓
+  { dr: 1, dc: 1 },   // diagonale ↘
+  { dr: -1, dc: 1 },  // diagonale ↗
+];
+
+// Génère une grille + les placements des mots. Renvoie { grid, words }.
+// words = [{ word, normalized, r0,c0, r1,c1, cells:[{r,c}] }]
+function makeMotsMelesGrid() {
+  const themes = WORDS_JSON.themes;
+  const themeKeys = Object.keys(themes);
+  const theme = themes[themeKeys[Math.floor(Math.random() * themeKeys.length)]];
+
+  // Mots candidats : 3 à 7 lettres une fois normalisés
+  const candidates = theme.words
+    .map((w) => ({ raw: w, norm: mmNormalize(w) }))
+    .filter((w) => w.norm.length >= 3 && w.norm.length <= 7);
+
+  // On mélange et on essaie d'en placer MM_WORD_COUNT
+  const shuffled = cultureShuffle(candidates);
+
+  const grid = Array.from({ length: MM_GRID }, () => Array(MM_GRID).fill(null));
+  const placed = [];
+
+  const tryPlace = (entry) => {
+    const { norm } = entry;
+    // 40 tentatives aléatoires
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const dir = MM_DIRS[Math.floor(Math.random() * MM_DIRS.length)];
+      const r0 = Math.floor(Math.random() * MM_GRID);
+      const c0 = Math.floor(Math.random() * MM_GRID);
+      const r1 = r0 + dir.dr * (norm.length - 1);
+      const c1 = c0 + dir.dc * (norm.length - 1);
+      if (r1 < 0 || r1 >= MM_GRID || c1 < 0 || c1 >= MM_GRID) continue;
+      // Vérifie que ça ne rentre pas en conflit (cases vides ou même lettre)
+      let ok = true;
+      const cells = [];
+      for (let k = 0; k < norm.length; k++) {
+        const r = r0 + dir.dr * k;
+        const c = c0 + dir.dc * k;
+        const existing = grid[r][c];
+        if (existing != null && existing !== norm[k]) { ok = false; break; }
+        cells.push({ r, c });
+      }
+      if (!ok) continue;
+      // Place
+      cells.forEach((cell, k) => { grid[cell.r][cell.c] = norm[k]; });
+      placed.push({
+        word: entry.raw, normalized: norm,
+        r0, c0, r1, c1, cells,
+      });
+      return true;
+    }
+    return false;
+  };
+
+  for (const entry of shuffled) {
+    if (placed.length >= MM_WORD_COUNT) break;
+    tryPlace(entry);
+  }
+
+  // Remplit les cases vides avec des lettres aléatoires
+  for (let r = 0; r < MM_GRID; r++) {
+    for (let c = 0; c < MM_GRID; c++) {
+      if (grid[r][c] == null) {
+        grid[r][c] = MM_ALPHABET[Math.floor(Math.random() * 26)];
+      }
+    }
+  }
+
+  return {
+    grid,
+    words: placed.map((p) => ({
+      word: p.word, normalized: p.normalized,
+      r0: p.r0, c0: p.c0, r1: p.r1, c1: p.c1,
+      theme: theme.label,
+    })),
+    themeLabel: theme.label,
+    themeEmoji: theme.emoji,
+  };
+}
+
+function makeMotsMelesState() {
+  return {
+    phase: 'ready',           // 'ready' | 'playing' | 'done'
+    grid: null,               // 8×8 lettres
+    words: [],                // placements des mots cachés
+    found: [],                // [{ wordIndex, by }] mots trouvés
+    themeLabel: '',
+    themeEmoji: '',
+    round: 1,
+  };
+}
+
+// Deux cases forment-elles une ligne droite ? Renvoie la liste des cases
+// traversées (ou null si pas une ligne droite valide).
+function mmLineCells(a, b) {
+  const dr = b.r - a.r;
+  const dc = b.c - a.c;
+  const adr = Math.abs(dr), adc = Math.abs(dc);
+  // horizontal, vertical, ou diagonale parfaite
+  const isLine = (dr === 0 && dc !== 0) || (dc === 0 && dr !== 0) || (adr === adc && adr !== 0);
+  if (!isLine) return null;
+  const steps = Math.max(adr, adc);
+  const sr = Math.sign(dr), sc = Math.sign(dc);
+  const cells = [];
+  for (let k = 0; k <= steps; k++) cells.push({ r: a.r + sr * k, c: a.c + sc * k });
+  return cells;
+}
+
+function MotsMelesOnline({ room, profile, player1, player2, onUpdate, onChangeGame, isSpectator = false }) {
+  const myIndex = isSpectator ? -1 : (room.player1_id === profile.id ? 0 : 1);
+  const isHost = myIndex === 0;
+  const players = [player1, player2];
+
+  const state = (room.state && room.state.phase) ? room.state : makeMotsMelesState();
+  const { phase, grid, words, found, themeLabel, themeEmoji } = state;
+
+  // Sélection en cours : première case touchée
+  const [firstCell, setFirstCell] = useState(null);
+  const [flashWrong, setFlashWrong] = useState(false);
+
+  // Score = nombre de mots trouvés par chacun
+  const scores = [0, 1].map((p) => (found || []).filter((f) => f.by === p).length);
+
+  const allFound = phase === 'playing' && words && found && found.length >= words.length;
+  const phaseDone = phase === 'done' || allFound;
+
+  const finalWinner = phaseDone
+    ? (scores[0] > scores[1] ? 0 : scores[1] > scores[0] ? 1 : 'draw')
+    : null;
+  useGameEndEffects(finalWinner, finalWinner === myIndex);
+  useRecordResult({ room, isHost: myIndex === 0, isSpectator, game: 'motsmeles', winnerIndex: finalWinner });
+
+  // Quand tous les mots sont trouvés, l'hôte bascule la phase à 'done'
+  useEffect(() => {
+    if (isHost && allFound && phase === 'playing') {
+      const newState = { ...state, phase: 'done' };
+      onUpdate({ ...room, state: newState });
+      updateRoomState(room.id, { state: newState }).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allFound, isHost, phase]);
+
+  // === Démarrer (hôte) ===
+  const startGame = async () => {
+    if (!isHost) return;
+    const gen = makeMotsMelesGrid();
+    const newState = {
+      ...makeMotsMelesState(),
+      phase: 'playing',
+      grid: gen.grid,
+      words: gen.words,
+      found: [],
+      themeLabel: gen.themeLabel,
+      themeEmoji: gen.themeEmoji,
+      round: state.round || 1,
+    };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
+
+  const newGame = async () => {
+    if (!isHost) return;
+    const gen = makeMotsMelesGrid();
+    const newState = {
+      ...makeMotsMelesState(),
+      phase: 'playing',
+      grid: gen.grid, words: gen.words, found: [],
+      themeLabel: gen.themeLabel, themeEmoji: gen.themeEmoji,
+      round: (state.round || 1) + 1,
+    };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
+
+  // Index des mots déjà trouvés + map cellule→propriétaire (pour colorer)
+  const foundWordIdx = new Set((found || []).map((f) => f.wordIndex));
+  const cellOwner = {};  // "r-c" → playerIndex
+  (found || []).forEach((f) => {
+    const w = words[f.wordIndex];
+    if (!w) return;
+    const cells = mmLineCells({ r: w.r0, c: w.c0 }, { r: w.r1, c: w.c1 }) || [];
+    cells.forEach((cell) => { cellOwner[`${cell.r}-${cell.c}`] = f.by; });
+  });
+
+  // === Toucher une case ===
+  const tapCell = async (r, c) => {
+    if (isSpectator || phase !== 'playing') return;
+    if (!firstCell) {
+      setFirstCell({ r, c });
+      playSound('pop');
+      return;
+    }
+    // 2e case → on valide la ligne
+    const line = mmLineCells(firstCell, { r, c });
+    setFirstCell(null);
+    if (!line) { setFlashWrong(true); setTimeout(() => setFlashWrong(false), 300); return; }
+
+    // Lettres de la ligne (dans les 2 sens)
+    const letters = line.map((cell) => grid[cell.r][cell.c]).join('');
+    const reversed = letters.split('').reverse().join('');
+
+    // Cherche un mot non trouvé qui correspond
+    const idx = words.findIndex((w, i) =>
+      !foundWordIdx.has(i) && (w.normalized === letters || w.normalized === reversed)
+    );
+    if (idx === -1) {
+      setFlashWrong(true); setTimeout(() => setFlashWrong(false), 300);
+      playSound('pop'); vibrate(30);
+      return;
+    }
+
+    // Trouvé !
+    playSound('pop'); vibrate(50); launchConfetti && launchConfetti();
+    const newFound = [...(found || []), { wordIndex: idx, by: myIndex }];
+    const newState = { ...state, found: newFound };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
+
+  // === ÉCRAN 1 : prêt ===
+  if (phase === 'ready') {
+    if (isHost) {
+      return (
+        <div className="rounded-3xl p-6 text-center"
+             style={{ background: C.mint, boxShadow: '0 6px 0 rgba(0,0,0,0.08)' }}>
+          <div className="text-6xl mb-3">🔤</div>
+          <h3 className="text-2xl mb-2"
+              style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+            Mots Mêlés
+          </h3>
+          <p className="text-sm mb-5" style={{ color: C.inkLight, fontWeight: 600 }}>
+            6 mots sont cachés dans la grille.
+            <br />Touche la 1re puis la dernière lettre d'un mot pour le prendre !
+          </p>
+          <button onClick={startGame} className="px-6 py-3 rounded-2xl clic-press"
+            style={{ background: C.accentPink, color: C.white,
+                     fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                     fontSize: '1.05rem', boxShadow: '0 4px 0 rgba(0,0,0,0.10)' }}>
+            🚀 Commencer la partie
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="rounded-3xl p-8 text-center"
+           style={{ background: C.mint, boxShadow: '0 6px 0 rgba(0,0,0,0.08)' }}>
+        <div className="text-6xl mb-3">⏳</div>
+        <h3 className="text-2xl mb-2"
+            style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+          En attente...
+        </h3>
+        <p style={{ color: C.inkLight, fontWeight: 600 }}>
+          {players[0]?.pseudo || 'L\'hôte'} lance la partie.
+        </p>
+      </div>
+    );
+  }
+
+  // === ÉCRAN 2 : résultat ===
+  if (phaseDone) {
+    const isDraw = finalWinner === 'draw';
+    const isMyWin = finalWinner === myIndex;
+    const opponentForChange = isHost ? players[1] : players[0];
+    return (
+      <div className="rounded-3xl p-6 text-center" style={{
+        background: isDraw ? C.lavender : (isMyWin ? C.mint : C.pink),
+        boxShadow: '0 6px 0 rgba(0,0,0,0.08)',
+      }}>
+        <div className="text-6xl mb-3">
+          <span className="clic-celebrate">{isDraw ? '🤝' : (isMyWin ? '🎉' : '😢')}</span>
+        </div>
+        <h3 className="text-3xl mb-3"
+            style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+          {isDraw ? 'Égalité !' : `${players[finalWinner]?.pseudo || 'Joueur'} gagne !`}
+        </h3>
+        <div className="flex items-center justify-around mb-4">
+          {[0, 1].map((i) => (
+            <div key={i} className="text-center">
+              <div className="text-2xl mb-1">{players[i]?.avatar || '👤'}</div>
+              <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 600 }}>
+                {players[i]?.pseudo || (i === 0 ? 'Hôte' : 'Invité')}
+              </div>
+              <div className="text-3xl" style={{ fontFamily: '"Fredoka", sans-serif',
+                                                   fontWeight: 700, color: C.ink }}>
+                {scores[i]}
+              </div>
+            </div>
+          ))}
+        </div>
+        {isHost ? (
+          <EndGameActions onRematch={newGame} onChangeGame={onChangeGame}
+            opponentName={opponentForChange?.pseudo} />
+        ) : (
+          <div className="text-sm" style={{ color: C.inkLight, fontWeight: 600 }}>
+            ⏳ {players[0]?.pseudo || 'L\'hôte'} va relancer...
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // === ÉCRAN 3 : jeu en cours ===
+  if (!grid) return null;
+  const colorFor = (owner) => owner === 0 ? C.peach : C.lavender;
+
+  return (
+    <div>
+      {/* Score + thème */}
+      <div className="rounded-2xl p-3 mb-3 flex items-center justify-around"
+           style={{ background: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
+        <div className="text-center">
+          <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 700 }}>
+            {players[0]?.pseudo || 'Hôte'}
+          </div>
+          <div className="text-2xl" style={{ fontFamily: '"Fredoka", sans-serif',
+                  fontWeight: 700, color: myIndex === 0 ? C.accentPink : C.ink }}>
+            {scores[0]}
+          </div>
+        </div>
+        <div className="text-center">
+          <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 700 }}>Thème</div>
+          <div className="text-sm" style={{ color: C.ink, fontWeight: 700 }}>
+            {themeEmoji} {themeLabel}
+          </div>
+          <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 600 }}>
+            {found.length} / {words.length} trouvés
+          </div>
+        </div>
+        <div className="text-center">
+          <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 700 }}>
+            {players[1]?.pseudo || 'Invité'}
+          </div>
+          <div className="text-2xl" style={{ fontFamily: '"Fredoka", sans-serif',
+                  fontWeight: 700, color: myIndex === 1 ? C.accentPink : C.ink }}>
+            {scores[1]}
+          </div>
+        </div>
+      </div>
+
+      {/* Grille de lettres */}
+      <div className="rounded-2xl p-2 mb-3"
+           style={{ background: flashWrong ? '#FFE0E0' : C.cream,
+                    boxShadow: '0 4px 0 rgba(0,0,0,0.06)', transition: 'background 0.2s' }}>
+        {grid.map((rowArr, r) => (
+          <div key={r} className="grid" style={{ gridTemplateColumns: `repeat(${MM_GRID}, 1fr)`, gap: 3, marginBottom: 3 }}>
+            {rowArr.map((letter, c) => {
+              const owner = cellOwner[`${r}-${c}`];
+              const isFound = owner != null;
+              const isFirst = firstCell && firstCell.r === r && firstCell.c === c;
+              return (
+                <button key={c} onClick={() => tapCell(r, c)}
+                  disabled={isSpectator}
+                  className="rounded-lg flex items-center justify-center clic-press"
+                  style={{
+                    aspectRatio: '1 / 1',
+                    background: isFound ? colorFor(owner) : (isFirst ? C.accentPink : C.white),
+                    color: isFirst ? C.white : C.ink,
+                    fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                    fontSize: '1rem',
+                    border: '1px solid rgba(0,0,0,0.05)',
+                  }}>
+                  {letter}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+
+      {/* Liste des mots à trouver */}
+      <div className="rounded-2xl p-3" style={{ background: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
+        <div className="text-xs mb-2" style={{ color: C.inkSoft, fontWeight: 700 }}>
+          Mots à trouver :
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {words.map((w, i) => {
+            const fEntry = (found || []).find((f) => f.wordIndex === i);
+            const isFound = !!fEntry;
+            return (
+              <span key={i} className="text-sm px-3 py-1 rounded-full"
+                style={{
+                  background: isFound ? colorFor(fEntry.by) : C.cream,
+                  color: C.ink, fontWeight: 700,
+                  textDecoration: isFound ? 'line-through' : 'none',
+                  opacity: isFound ? 0.7 : 1,
+                }}>
+                {w.word.toUpperCase()}
+              </span>
+            );
+          })}
+        </div>
+        {firstCell && (
+          <div className="text-xs mt-2 text-center" style={{ color: C.accentPink, fontWeight: 700 }}>
+            Touche maintenant la dernière lettre du mot (ou re-touche pour annuler)
+          </div>
+        )}
       </div>
     </div>
   );
