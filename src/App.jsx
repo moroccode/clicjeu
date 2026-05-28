@@ -1138,8 +1138,8 @@ const BADGES = [
     check: (s) => s.totalGames >= 10 },
   { id: 'veteran',     emoji: '🌟', title: 'Vétéran',           desc: 'Joue 50 parties',
     check: (s) => s.totalGames >= 50 },
-  { id: 'all_games',   emoji: '🎯', title: 'Touche-à-tout',     desc: 'Joue aux 9 jeux',
-    check: (s) => s.distinctGames >= 9 },
+  { id: 'all_games',   emoji: '🎯', title: 'Touche-à-tout',     desc: 'Joue aux 10 jeux',
+    check: (s) => s.distinctGames >= 10 },
   { id: 'champion',    emoji: '👑', title: 'Champion',          desc: 'Gagne 25 parties',
     check: (s) => s.totalWins >= 25 },
   { id: 'social',      emoji: '🤝', title: 'Sociable',          desc: 'Joue avec 3 amis différents',
@@ -6774,6 +6774,11 @@ function MotsMelesOnline({ room, profile, player1, player2, onUpdate, onChangeGa
     if (!firstCell) {
       setFirstCell({ r, c });
       playSound('pop');
+      return;
+    }
+    // Re-toucher la même case = annuler la sélection
+    if (firstCell.r === r && firstCell.c === c) {
+      setFirstCell(null);
       return;
     }
     // 2e case → on valide la ligne
