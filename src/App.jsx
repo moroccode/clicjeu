@@ -1625,6 +1625,7 @@ function GameHub({ profile, onLogout, onEditAvatar }) {
           // FriendsScreen accepte un initialInvite prop (à ajouter)
           setQuickInviteFriend(friend);
         }}
+        onWatchFriend={(friend) => watchFriend(friend.id)}
         incomingInvites={incomingInvites}
         onAcceptInvite={acceptIncoming}
         onIgnoreInvite={(roomId) => {
@@ -1750,11 +1751,19 @@ function FriendsScreen({ profile, onBack, onInviteToGame, initialInviteFriend = 
     onInviteToGame(friend, gameId);
   };
 
-  // Si on est en train d'inviter un ami, on affiche l'écran de choix de jeu
+  // Si on est en train d'inviter un ami, on affiche l'écran de choix de jeu.
+  // RETOUR DE LA SESSION : l'utilisateur s'est plaint qu'après une invitation
+  // (ou son annulation), on lui re-montrait toute la liste d'amis. Si l'invite
+  // a démarré depuis la home (= quickInvite, signalé par initialInviteFriend),
+  // on revient direct à la home au lieu d'afficher la liste.
   if (invitingFriend) {
+    const cameFromHome = !!initialInviteFriend;
     return <InviteGamePicker friend={invitingFriend}
              onPick={handleGamePicked}
-             onCancel={() => setInvitingFriend(null)} />;
+             onCancel={() => {
+               setInvitingFriend(null);
+               if (cameFromHome) onBack();
+             }} />;
   }
 
   return (
@@ -2734,7 +2743,7 @@ function InstallBanner() {
 
 function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
                       pendingFriendRequests = 0, friends = [],
-                      onQuickInvite,
+                      onQuickInvite, onWatchFriend,
                       incomingInvites = [], onAcceptInvite, onIgnoreInvite,
                       toast = null, onOpenTrophies = null }) {
   // Ordre des cartes : les jeux jouables en solo en premier (priorité de
@@ -2898,16 +2907,18 @@ function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
               return (
                 <button key={f.id}
                   onClick={() => {
+                    tap();
                     if (isBusy) {
-                      tap();
-                      toastEmit({ kind: 'info', message: `${f.pseudo} est en partie` });
+                      // Ami occupé → on lance direct le mode spectateur.
+                      // (Retour de la session : avant on affichait juste
+                      // "X est en partie" sans rien faire, c'était frustrant.)
+                      if (onWatchFriend) onWatchFriend(f);
                       return;
                     }
-                    tap();
                     onQuickInvite && onQuickInvite(f);
                   }}
                   className="flex flex-col items-center clic-press flex-shrink-0"
-                  style={{ minWidth: 56, opacity: isBusy ? 0.65 : 1 }}>
+                  style={{ minWidth: 56, opacity: isBusy ? 0.85 : 1 }}>
                   <div className="relative">
                     <div className="text-3xl">{f.avatar || '👤'}</div>
                     <div style={{ position: 'absolute', right: -2, bottom: -2 }}>
@@ -3970,6 +3981,35 @@ function useRecordResult({ room, isHost, isSpectator, game, winnerIndex }) {
   useEffect(() => {
     if (winnerIndex == null) recordedRef.current = false;
   }, [winnerIndex]);
+}
+
+// ============================================================
+// HOOK : useQuizTimer — chrono partagé pour les quiz (Culture G, Géo, Math)
+// ------------------------------------------------------------
+// Source de vérité = questionStartedAt (timestamp ms) dans room.state.
+// Chaque client calcule le temps restant localement à partir de ce
+// timestamp + une horloge locale qui tick toutes les 200ms. Pas de
+// dérive : si un client perd quelques rafraîchissements réseau,
+// le temps restant reste correct au prochain rendu.
+//
+// Quand le temps tombe à 0 : on entre en phase "reveal" pendant
+// REVEAL_MS ms (on montre la bonne réponse), puis on passe à la question
+// suivante (l'hôte écrit la transition, comme pour les autres jeux).
+// ============================================================
+const QUIZ_QUESTION_MS = 10000;   // 10 secondes par question
+const QUIZ_REVEAL_MS = 2000;      // 2s pour montrer la bonne réponse
+
+function useQuizTimer(startedAt, active) {
+  const [, force] = useState(0);
+  useEffect(() => {
+    if (!active || startedAt == null) return;
+    const t = setInterval(() => force((n) => n + 1), 200);
+    return () => clearInterval(t);
+  }, [active, startedAt]);
+  if (startedAt == null) return { msLeft: QUIZ_QUESTION_MS, expired: false };
+  const elapsed = Date.now() - startedAt;
+  const msLeft = Math.max(0, QUIZ_QUESTION_MS - elapsed);
+  return { msLeft, expired: msLeft === 0 };
 }
 
 function useGameEndEffects(winner, didIWin) {
@@ -5736,6 +5776,9 @@ function makeMathState() {
     scores: [0, 0],
     lastTapBy: null,   // qui vient de bien répondre (pour micro-feedback visuel)
     round: 1,
+    questionStartedAt: null,  // ms : début de la question courante
+    reveal: false,            // true = on montre la bonne réponse 2s
+    revealUntil: null,        // ms : fin de la phase reveal
   };
 }
 
@@ -5745,7 +5788,7 @@ function MathDuelOnline({ room, profile, player1, player2, onUpdate, onChangeGam
   const players = [player1, player2];
 
   const state = (room.state && room.state.phase) ? room.state : makeMathState();
-  const { phase, level, questions, currentIdx, scores } = state;
+  const { phase, level, questions, currentIdx, scores, questionStartedAt, reveal, revealUntil } = state;
 
   // Feedback visuel local : quand je tape une mauvaise réponse, je veux que MON
   // bouton flashe rouge, sans affecter l'état partagé (l'autre joueur n'a pas
@@ -5757,6 +5800,10 @@ function MathDuelOnline({ room, profile, player1, player2, onUpdate, onChangeGam
     return () => clearTimeout(t);
   }, [wrongTap]);
 
+  // Chrono partagé (10s par question)
+  const timerActive = phase === 'playing' && !reveal;
+  const { msLeft, expired } = useQuizTimer(questionStartedAt, timerActive);
+
   // Effets de fin de partie
   const finalWinner = phase === 'done'
     ? (scores[0] > scores[1] ? 0 : scores[1] > scores[0] ? 1 : 'draw')
@@ -5765,6 +5812,40 @@ function MathDuelOnline({ room, profile, player1, player2, onUpdate, onChangeGam
 
   // Enregistrement du résultat (hôte uniquement)
   useRecordResult({ room, isHost: myIndex === 0, isSpectator, game: 'math', winnerIndex: finalWinner });
+
+  // Timeout → reveal (hôte)
+  useEffect(() => {
+    if (!isHost || !timerActive || !expired) return;
+    const newState = { ...state, reveal: true, revealUntil: Date.now() + QUIZ_REVEAL_MS };
+    onUpdate({ ...room, state: newState });
+    updateRoomState(room.id, { state: newState }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost, timerActive, expired]);
+
+  // Fin de reveal → question suivante (hôte)
+  useEffect(() => {
+    if (!isHost || !reveal || revealUntil == null) return;
+    const remaining = revealUntil - Date.now();
+    if (remaining <= 0) { advanceAfterReveal(); return; }
+    const t = setTimeout(advanceAfterReveal, remaining);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost, reveal, revealUntil]);
+
+  const advanceAfterReveal = async () => {
+    const nextIdx = currentIdx + 1;
+    const done = nextIdx >= questions.length;
+    const newState = {
+      ...state,
+      currentIdx: nextIdx,
+      phase: done ? 'done' : 'playing',
+      reveal: false,
+      revealUntil: null,
+      questionStartedAt: done ? null : Date.now(),
+    };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
 
   const pickLevel = async (lvl) => {
     if (!isHost) return;
@@ -5775,6 +5856,9 @@ function MathDuelOnline({ room, profile, player1, player2, onUpdate, onChangeGam
       questions: makeMathQuestions(lvl),
       currentIdx: 0,
       scores: [0, 0],
+      questionStartedAt: Date.now(),
+      reveal: false,
+      revealUntil: null,
     };
     onUpdate({ ...room, state: newState });
     await updateRoomState(room.id, { state: newState });
@@ -5783,7 +5867,7 @@ function MathDuelOnline({ room, profile, player1, player2, onUpdate, onChangeGam
   // === Un joueur tape une réponse ===
   const tapAnswer = async (choice) => {
     if (isSpectator) return;        // un spectateur ne répond pas
-    if (phase !== 'playing') return;
+    if (phase !== 'playing' || reveal) return;
     const q = questions[currentIdx];
     if (!q) return;
     if (choice !== q.answer) {
@@ -5793,18 +5877,17 @@ function MathDuelOnline({ room, profile, player1, player2, onUpdate, onChangeGam
       vibrate(30);
       return;
     }
-    // Bonne réponse : on marque + on avance
+    // Bonne réponse → marque + on entre en reveal (2s) avant question suivante
     playSound('pop');
     vibrate(50);
     const newScores = [...scores];
     newScores[myIndex] += 1;
-    const nextIdx = currentIdx + 1;
     const newState = {
       ...state,
       scores: newScores,
-      currentIdx: nextIdx,
       lastTapBy: myIndex,
-      phase: nextIdx >= questions.length ? 'done' : 'playing',
+      reveal: true,
+      revealUntil: Date.now() + QUIZ_REVEAL_MS,
     };
     onUpdate({ ...room, state: newState });
     await updateRoomState(room.id, { state: newState });
@@ -5819,6 +5902,7 @@ function MathDuelOnline({ room, profile, player1, player2, onUpdate, onChangeGam
       level,
       questions: makeMathQuestions(level || 'facile'),
       round: (state.round || 1) + 1,
+      questionStartedAt: Date.now(),
     };
     onUpdate({ ...room, state: newState });
     await updateRoomState(room.id, { state: newState });
@@ -5968,6 +6052,19 @@ function MathDuelOnline({ room, profile, player1, player2, onUpdate, onChangeGam
         </div>
       </div>
 
+      {/* Chrono : barre 10s */}
+      <div className="rounded-full mb-3 overflow-hidden"
+           style={{ height: 8, background: 'rgba(0,0,0,0.06)' }}>
+        <div style={{
+          height: '100%',
+          width: `${reveal ? 0 : Math.round((msLeft / QUIZ_QUESTION_MS) * 100)}%`,
+          background: reveal ? '#6BCB77'
+            : msLeft < 3000 ? C.accentPink
+            : C.mint,
+          transition: 'width 0.2s linear, background 0.3s',
+        }} />
+      </div>
+
       {/* La question, gros et centré */}
       <div className="rounded-3xl p-8 mb-4 text-center"
            style={{ background: C.cream, boxShadow: '0 4px 0 rgba(0,0,0,0.08)' }}>
@@ -5975,24 +6072,35 @@ function MathDuelOnline({ room, profile, player1, player2, onUpdate, onChangeGam
                       color: C.ink, fontSize: '3rem', lineHeight: 1.1 }}>
           {q.a} {q.op} {q.b} = ?
         </div>
+        {reveal && (
+          <div className="text-sm mt-3" style={{ color: '#3A9B6B', fontWeight: 700 }}>
+            ✓ Bonne réponse : {q.answer}
+          </div>
+        )}
       </div>
 
       {/* 4 boutons QCM */}
       <div className="grid grid-cols-2 gap-3">
         {q.choices.map((c, i) => {
           const isWrong = wrongTap === c;
+          const isCorrectReveal = reveal && c === q.answer;
           return (
             <button key={i} onClick={() => tapAnswer(c)}
+              disabled={reveal}
               className="rounded-2xl p-5 clic-press"
               style={{
-                background: isWrong ? '#FFD0D0' : C.white,
+                background: isCorrectReveal ? '#D4F5E0' : isWrong ? '#FFD0D0' : C.white,
                 color: C.ink,
                 fontFamily: '"Fredoka", sans-serif',
                 fontWeight: 700, fontSize: '1.6rem',
-                boxShadow: isWrong ? '0 3px 0 rgba(200,0,0,0.2)' : '0 4px 0 rgba(0,0,0,0.08)',
+                boxShadow: isCorrectReveal ? '0 3px 0 rgba(60,160,90,0.3)'
+                  : isWrong ? '0 3px 0 rgba(200,0,0,0.2)'
+                  : '0 4px 0 rgba(0,0,0,0.08)',
+                outline: isCorrectReveal ? '2px solid #6BCB77' : 'none',
                 transition: 'background 0.2s',
+                opacity: reveal && !isCorrectReveal ? 0.5 : 1,
               }}>
-              {c}
+              {isCorrectReveal && '✓ '}{c}
             </button>
           );
         })}
@@ -6022,6 +6130,9 @@ function makeGeoState() {
     scores: [0, 0],
     lastTapBy: null,
     round: 1,
+    questionStartedAt: null,
+    reveal: false,
+    revealUntil: null,
   };
 }
 
@@ -6031,7 +6142,7 @@ function GeoQuizOnline({ room, profile, player1, player2, onUpdate, onChangeGame
   const players = [player1, player2];
 
   const state = (room.state && room.state.phase) ? room.state : makeGeoState();
-  const { phase, questions, currentIdx, scores } = state;
+  const { phase, questions, currentIdx, scores, questionStartedAt, reveal, revealUntil } = state;
 
   // Feedback visuel local (mauvaise réponse)
   const [wrongTap, setWrongTap] = useState(null);
@@ -6040,6 +6151,10 @@ function GeoQuizOnline({ room, profile, player1, player2, onUpdate, onChangeGame
     const t = setTimeout(() => setWrongTap(null), 400);
     return () => clearTimeout(t);
   }, [wrongTap]);
+
+  // Chrono partagé (10s par question)
+  const timerActive = phase === 'playing' && !reveal;
+  const { msLeft, expired } = useQuizTimer(questionStartedAt, timerActive);
 
   // Effets de fin de partie
   const finalWinner = phase === 'done'
@@ -6050,6 +6165,40 @@ function GeoQuizOnline({ room, profile, player1, player2, onUpdate, onChangeGame
   // Enregistrement du résultat (hôte uniquement)
   useRecordResult({ room, isHost: myIndex === 0, isSpectator, game: 'geo', winnerIndex: finalWinner });
 
+  // Timeout → reveal (hôte)
+  useEffect(() => {
+    if (!isHost || !timerActive || !expired) return;
+    const newState = { ...state, reveal: true, revealUntil: Date.now() + QUIZ_REVEAL_MS };
+    onUpdate({ ...room, state: newState });
+    updateRoomState(room.id, { state: newState }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost, timerActive, expired]);
+
+  // Fin de reveal → question suivante (hôte)
+  useEffect(() => {
+    if (!isHost || !reveal || revealUntil == null) return;
+    const remaining = revealUntil - Date.now();
+    if (remaining <= 0) { advanceAfterReveal(); return; }
+    const t = setTimeout(advanceAfterReveal, remaining);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost, reveal, revealUntil]);
+
+  const advanceAfterReveal = async () => {
+    const nextIdx = currentIdx + 1;
+    const done = nextIdx >= questions.length;
+    const newState = {
+      ...state,
+      currentIdx: nextIdx,
+      phase: done ? 'done' : 'playing',
+      reveal: false,
+      revealUntil: null,
+      questionStartedAt: done ? null : Date.now(),
+    };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
+
   // === Démarrer la partie (hôte) ===
   const startGame = async () => {
     if (!isHost) return;
@@ -6059,6 +6208,9 @@ function GeoQuizOnline({ room, profile, player1, player2, onUpdate, onChangeGame
       questions: makeGeoQuestions(10),
       currentIdx: 0,
       scores: [0, 0],
+      questionStartedAt: Date.now(),
+      reveal: false,
+      revealUntil: null,
     };
     onUpdate({ ...room, state: newState });
     await updateRoomState(room.id, { state: newState });
@@ -6066,8 +6218,8 @@ function GeoQuizOnline({ room, profile, player1, player2, onUpdate, onChangeGame
 
   // === Un joueur tape une réponse ===
   const tapAnswer = async (choice) => {
-    if (isSpectator) return;        // un spectateur ne répond pas
-    if (phase !== 'playing') return;
+    if (isSpectator) return;
+    if (phase !== 'playing' || reveal) return;
     const q = questions[currentIdx];
     if (!q) return;
     if (choice !== q.answer) {
@@ -6080,13 +6232,12 @@ function GeoQuizOnline({ room, profile, player1, player2, onUpdate, onChangeGame
     vibrate(50);
     const newScores = [...scores];
     newScores[myIndex] += 1;
-    const nextIdx = currentIdx + 1;
     const newState = {
       ...state,
       scores: newScores,
-      currentIdx: nextIdx,
       lastTapBy: myIndex,
-      phase: nextIdx >= questions.length ? 'done' : 'playing',
+      reveal: true,
+      revealUntil: Date.now() + QUIZ_REVEAL_MS,
     };
     onUpdate({ ...room, state: newState });
     await updateRoomState(room.id, { state: newState });
@@ -6100,6 +6251,7 @@ function GeoQuizOnline({ room, profile, player1, player2, onUpdate, onChangeGame
       phase: 'playing',
       questions: makeGeoQuestions(10),
       round: (state.round || 1) + 1,
+      questionStartedAt: Date.now(),
     };
     onUpdate({ ...room, state: newState });
     await updateRoomState(room.id, { state: newState });
@@ -6235,6 +6387,19 @@ function GeoQuizOnline({ room, profile, player1, player2, onUpdate, onChangeGame
         </div>
       </div>
 
+      {/* Chrono : barre 10s */}
+      <div className="rounded-full mb-3 overflow-hidden"
+           style={{ height: 8, background: 'rgba(0,0,0,0.06)' }}>
+        <div style={{
+          height: '100%',
+          width: `${reveal ? 0 : Math.round((msLeft / QUIZ_QUESTION_MS) * 100)}%`,
+          background: reveal ? '#6BCB77'
+            : msLeft < 3000 ? C.accentPink
+            : C.lavender,
+          transition: 'width 0.2s linear, background 0.3s',
+        }} />
+      </div>
+
       {/* Prompt (drapeau géant ou nom de pays) */}
       <div className="rounded-3xl p-6 mb-4 text-center"
            style={{ background: C.cream, boxShadow: '0 4px 0 rgba(0,0,0,0.08)' }}>
@@ -6249,24 +6414,35 @@ function GeoQuizOnline({ room, profile, player1, player2, onUpdate, onChangeGame
         }}>
           {q.prompt}
         </div>
+        {reveal && (
+          <div className="text-sm mt-3" style={{ color: '#3A9B6B', fontWeight: 700 }}>
+            ✓ Bonne réponse : {q.answer}
+          </div>
+        )}
       </div>
 
       {/* 4 réponses en colonne */}
       <div className="flex flex-col gap-3">
         {q.choices.map((c, i) => {
           const isWrong = wrongTap === c;
+          const isCorrectReveal = reveal && c === q.answer;
           return (
             <button key={i} onClick={() => tapAnswer(c)}
+              disabled={reveal}
               className="rounded-2xl px-4 py-4 clic-press text-left"
               style={{
-                background: isWrong ? '#FFD0D0' : C.white,
+                background: isCorrectReveal ? '#D4F5E0' : isWrong ? '#FFD0D0' : C.white,
                 color: C.ink,
                 fontFamily: '"Fredoka", sans-serif',
                 fontWeight: 700, fontSize: '1.05rem',
-                boxShadow: isWrong ? '0 3px 0 rgba(200,0,0,0.2)' : '0 4px 0 rgba(0,0,0,0.08)',
+                boxShadow: isCorrectReveal ? '0 3px 0 rgba(60,160,90,0.3)'
+                  : isWrong ? '0 3px 0 rgba(200,0,0,0.2)'
+                  : '0 4px 0 rgba(0,0,0,0.08)',
+                outline: isCorrectReveal ? '2px solid #6BCB77' : 'none',
                 transition: 'background 0.2s',
+                opacity: reveal && !isCorrectReveal ? 0.5 : 1,
               }}>
-              {c}
+              {isCorrectReveal && '✓ '}{c}
             </button>
           );
         })}
@@ -6307,12 +6483,15 @@ function makeCultureQuestions(count = 10) {
 
 function makeCultureState() {
   return {
-    phase: 'ready',      // 'ready' | 'playing' | 'done'
+    phase: 'ready',          // 'ready' | 'playing' | 'done'
     questions: [],
     currentIdx: 0,
     scores: [0, 0],
     lastTapBy: null,
     round: 1,
+    questionStartedAt: null, // ms timestamp partagé pour le chrono
+    reveal: false,           // true = on montre la bonne réponse (entre 2 questions)
+    revealUntil: null,       // ms timestamp : fin de la phase reveal
   };
 }
 
@@ -6322,7 +6501,7 @@ function CultureGOnline({ room, profile, player1, player2, onUpdate, onChangeGam
   const players = [player1, player2];
 
   const state = (room.state && room.state.phase) ? room.state : makeCultureState();
-  const { phase, questions, currentIdx, scores } = state;
+  const { phase, questions, currentIdx, scores, questionStartedAt, reveal, revealUntil } = state;
 
   const [wrongTap, setWrongTap] = useState(null);
   useEffect(() => {
@@ -6331,11 +6510,57 @@ function CultureGOnline({ room, profile, player1, player2, onUpdate, onChangeGam
     return () => clearTimeout(t);
   }, [wrongTap]);
 
+  // Chrono partagé (10s par question), actif pendant 'playing' hors reveal
+  const timerActive = phase === 'playing' && !reveal;
+  const { msLeft, expired } = useQuizTimer(questionStartedAt, timerActive);
+
   const finalWinner = phase === 'done'
     ? (scores[0] > scores[1] ? 0 : scores[1] > scores[0] ? 1 : 'draw')
     : null;
   useGameEndEffects(finalWinner, finalWinner === myIndex);
   useRecordResult({ room, isHost: myIndex === 0, isSpectator, game: 'culture', winnerIndex: finalWinner });
+
+  // === Timeout : si le temps est écoulé, on entre en reveal (hôte uniquement) ===
+  useEffect(() => {
+    if (!isHost || !timerActive || !expired) return;
+    const newState = {
+      ...state,
+      reveal: true,
+      revealUntil: Date.now() + QUIZ_REVEAL_MS,
+    };
+    onUpdate({ ...room, state: newState });
+    updateRoomState(room.id, { state: newState }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost, timerActive, expired]);
+
+  // === Fin de reveal : on avance à la question suivante (hôte uniquement) ===
+  useEffect(() => {
+    if (!isHost || !reveal || revealUntil == null) return;
+    const remaining = revealUntil - Date.now();
+    if (remaining <= 0) {
+      // Cas où on est déjà en retard (revenu d'un autre onglet) : avance direct
+      advanceAfterReveal();
+      return;
+    }
+    const t = setTimeout(advanceAfterReveal, remaining);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost, reveal, revealUntil]);
+
+  const advanceAfterReveal = async () => {
+    const nextIdx = currentIdx + 1;
+    const done = nextIdx >= questions.length;
+    const newState = {
+      ...state,
+      currentIdx: nextIdx,
+      phase: done ? 'done' : 'playing',
+      reveal: false,
+      revealUntil: null,
+      questionStartedAt: done ? null : Date.now(),
+    };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
 
   // === Démarrer (hôte) ===
   const startGame = async () => {
@@ -6346,6 +6571,9 @@ function CultureGOnline({ room, profile, player1, player2, onUpdate, onChangeGam
       questions: makeCultureQuestions(10),
       currentIdx: 0,
       scores: [0, 0],
+      questionStartedAt: Date.now(),
+      reveal: false,
+      revealUntil: null,
     };
     onUpdate({ ...room, state: newState });
     await updateRoomState(room.id, { state: newState });
@@ -6354,7 +6582,7 @@ function CultureGOnline({ room, profile, player1, player2, onUpdate, onChangeGam
   // === Un joueur tape une réponse ===
   const tapAnswer = async (choice) => {
     if (isSpectator) return;
-    if (phase !== 'playing') return;
+    if (phase !== 'playing' || reveal) return;        // bloqué pendant reveal
     const q = questions[currentIdx];
     if (!q) return;
     if (choice !== q.answer) {
@@ -6367,13 +6595,13 @@ function CultureGOnline({ room, profile, player1, player2, onUpdate, onChangeGam
     vibrate(50);
     const newScores = [...scores];
     newScores[myIndex] += 1;
-    const nextIdx = currentIdx + 1;
+    // Bonne réponse → on entre en reveal (les 2 voient la bonne réponse 2s)
     const newState = {
       ...state,
       scores: newScores,
-      currentIdx: nextIdx,
       lastTapBy: myIndex,
-      phase: nextIdx >= questions.length ? 'done' : 'playing',
+      reveal: true,
+      revealUntil: Date.now() + QUIZ_REVEAL_MS,
     };
     onUpdate({ ...room, state: newState });
     await updateRoomState(room.id, { state: newState });
@@ -6387,6 +6615,7 @@ function CultureGOnline({ room, profile, player1, player2, onUpdate, onChangeGam
       phase: 'playing',
       questions: makeCultureQuestions(10),
       round: (state.round || 1) + 1,
+      questionStartedAt: Date.now(),
     };
     onUpdate({ ...room, state: newState });
     await updateRoomState(room.id, { state: newState });
@@ -6520,6 +6749,19 @@ function CultureGOnline({ room, profile, player1, player2, onUpdate, onChangeGam
         </div>
       </div>
 
+      {/* Chrono : barre qui se vide en 10s */}
+      <div className="rounded-full mb-3 overflow-hidden"
+           style={{ height: 8, background: 'rgba(0,0,0,0.06)' }}>
+        <div style={{
+          height: '100%',
+          width: `${reveal ? 0 : Math.round((msLeft / QUIZ_QUESTION_MS) * 100)}%`,
+          background: reveal ? '#6BCB77'
+            : msLeft < 3000 ? C.accentPink
+            : C.blue,
+          transition: 'width 0.2s linear, background 0.3s',
+        }} />
+      </div>
+
       {/* Question */}
       <div className="rounded-3xl p-5 mb-4 text-center"
            style={{ background: C.cream, boxShadow: '0 4px 0 rgba(0,0,0,0.08)' }}>
@@ -6531,24 +6773,35 @@ function CultureGOnline({ room, profile, player1, player2, onUpdate, onChangeGam
                       color: C.ink, fontSize: '1.25rem', lineHeight: 1.25 }}>
           {q.prompt}
         </div>
+        {reveal && (
+          <div className="text-sm mt-2" style={{ color: '#3A9B6B', fontWeight: 700 }}>
+            ✓ Bonne réponse : {q.answer}
+          </div>
+        )}
       </div>
 
       {/* 4 réponses */}
       <div className="flex flex-col gap-3">
         {q.choices.map((c, i) => {
           const isWrong = wrongTap === c;
+          const isCorrectReveal = reveal && c === q.answer;
           return (
             <button key={i} onClick={() => tapAnswer(c)}
+              disabled={reveal}
               className="rounded-2xl px-4 py-4 clic-press text-left"
               style={{
-                background: isWrong ? '#FFD0D0' : C.white,
+                background: isCorrectReveal ? '#D4F5E0' : isWrong ? '#FFD0D0' : C.white,
                 color: C.ink,
                 fontFamily: '"Fredoka", sans-serif',
                 fontWeight: 700, fontSize: '1.05rem',
-                boxShadow: isWrong ? '0 3px 0 rgba(200,0,0,0.2)' : '0 4px 0 rgba(0,0,0,0.08)',
+                boxShadow: isCorrectReveal ? '0 3px 0 rgba(60,160,90,0.3)'
+                  : isWrong ? '0 3px 0 rgba(200,0,0,0.2)'
+                  : '0 4px 0 rgba(0,0,0,0.08)',
+                outline: isCorrectReveal ? '2px solid #6BCB77' : 'none',
                 transition: 'background 0.2s',
+                opacity: reveal && !isCorrectReveal ? 0.5 : 1,
               }}>
-              {c}
+              {isCorrectReveal && '✓ '}{c}
             </button>
           );
         })}
