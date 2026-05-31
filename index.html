@@ -8,12 +8,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
     <meta name="theme-color" content="#FF8FB1" />
 
-    <!-- Manifest PWA : rend l'app installable sur l'écran d'accueil.
-         IMPORTANT : on N'enregistre AUCUN Service Worker (voir plus bas).
-         C'est exactement la recette de GeoDojo, qui est installable SANS
-         déclencher l'avertissement Play Protect. Le Service Worker était
-         le coupable du warning "Appli non sécurisée" — on s'en passe. -->
-    <link rel="manifest" href="/manifest.json" />
+    <!-- PWA / installation DÉSACTIVÉE volontairement.
+         Le lien manifest a été retiré : sans lui, Chrome ne propose plus
+         d'installer ClicJeu comme application (WebAPK), ce qui supprime
+         l'avertissement Play Protect "Appli non sécurisée" sur Android.
+         ClicJeu reste un site web normal — les enfants ouvrent le lien dans
+         le navigateur. Ils peuvent toujours l'ajouter manuellement à l'écran
+         d'accueil via le menu du navigateur (ça ne déclenche pas le warning).
+         Le script plus bas désenregistre tout ancien Service Worker. -->
 
     <title>ClicJeu — 11 jeux pour 2 joueurs</title>
     <meta name="description" content="Joue à 11 mini-jeux fun avec un ami : Tic Tac Toe, Puissance 4, Pendu, Échecs, Math Duel, Géo Quiz, Pierre Feuille Ciseaux, Course au trésor, Culture G, Mots Mêlés et Dominos." />
