@@ -1115,6 +1115,17 @@ const GAMES = {
       { icon: '🏆', text: 'Le plus de mots trouvés gagne !' },
     ],
   },
+  dominos: {
+    title: 'Dominos', cardEmoji: '🁫🁌', headerEmoji: '🁫',
+    bg: C.cream, tagline: 'Le jeu classique !',
+    objective: 'Pose tes tuiles pour vider ta main avant l\'adversaire.',
+    rules: [
+      { icon: '🎴', text: '7 tuiles distribuées à chacun' },
+      { icon: '🔢', text: 'Pose une tuile qui correspond à un bout de la chaîne' },
+      { icon: '🃏', text: 'Si tu ne peux pas jouer, pioche une tuile' },
+      { icon: '🏆', text: 'Le 1er à vider sa main gagne !' },
+    ],
+  },
 };
 
 // ============================================================
@@ -1138,8 +1149,8 @@ const BADGES = [
     check: (s) => s.totalGames >= 10 },
   { id: 'veteran',     emoji: '🌟', title: 'Vétéran',           desc: 'Joue 50 parties',
     check: (s) => s.totalGames >= 50 },
-  { id: 'all_games',   emoji: '🎯', title: 'Touche-à-tout',     desc: 'Joue aux 10 jeux',
-    check: (s) => s.distinctGames >= 10 },
+  { id: 'all_games',   emoji: '🎯', title: 'Touche-à-tout',     desc: 'Joue aux 11 jeux',
+    check: (s) => s.distinctGames >= 11 },
   { id: 'champion',    emoji: '👑', title: 'Champion',          desc: 'Gagne 25 parties',
     check: (s) => s.totalWins >= 25 },
   { id: 'social',      emoji: '🤝', title: 'Sociable',          desc: 'Joue avec 3 amis différents',
@@ -3824,6 +3835,7 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onC
             case 'course':   return <CourseOnline    {...gameProps} />;
             case 'culture':  return <CultureGOnline  {...gameProps} />;
             case 'motsmeles': return <MotsMelesOnline {...gameProps} />;
+            case 'dominos':  return <DominosOnline   {...gameProps} />;
             default:
               return (
                 <div className="rounded-2xl p-4 text-center" style={{
@@ -7239,6 +7251,564 @@ function MotsMelesOnline({ room, profile, player1, player2, onUpdate, onChangeGa
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// JEU — DOMINOS — VERSION ONLINE (variante classique block/draw)
+// ------------------------------------------------------------
+// Jeu classique des dominos 1v1 :
+//   - 28 tuiles (de [0,0] à [6,6]), 7 à chacun, 14 dans la pioche
+//   - Le plus haut double commence (ou la plus haute tuile si pas de double)
+//   - Chacun son tour : pose une tuile qui correspond à un bout de la chaîne,
+//     OU pioche si pas possible, OU passe si pioche vide
+//   - 1er à vider sa main gagne. Si blocage (2 passes consécutives) :
+//     plus petit total de points dans la main gagne
+//
+// Note réseau : les mains sont stockées dans room.state (donc techniquement
+// visibles dans la console, comme pour PFC). Pour des enfants qui jouent en
+// confiance, c'est acceptable. L'UI n'affiche que ta propre main.
+//
+// Représentation d'une tuile dans la chaîne : [leftValue, rightValue] déjà
+// orientée. Du coup : ends[0] = chain[0][0], ends[1] = chain[last][1].
+// Une tuile dans la main : [a, b] avec a ≤ b (forme canonique).
+// ============================================================
+
+// Construit les 28 tuiles canoniques [a,b] avec a ≤ b
+function makeDominoSet() {
+  const tiles = [];
+  for (let a = 0; a <= 6; a++)
+    for (let b = a; b <= 6; b++) tiles.push([a, b]);
+  return tiles;
+}
+
+function shuffleArray(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// Choisit le joueur qui ouvre + la tuile d'ouverture.
+// Renvoie { starter, openingTileIdx } où openingTileIdx est l'index dans
+// la main du starter. Règle : plus haut double, sinon plus haute somme.
+function pickDominosOpener(hands) {
+  // Cherche le plus haut double dans chaque main
+  const bestDouble = hands.map((hand) => {
+    let best = -1, idx = -1;
+    hand.forEach((t, i) => { if (t[0] === t[1] && t[0] > best) { best = t[0]; idx = i; } });
+    return { best, idx };
+  });
+  if (bestDouble[0].best >= 0 || bestDouble[1].best >= 0) {
+    const starter = bestDouble[0].best >= bestDouble[1].best ? 0 : 1;
+    return { starter, openingTileIdx: bestDouble[starter].idx };
+  }
+  // Pas de double : on prend la plus haute somme
+  const bestSum = hands.map((hand) => {
+    let best = -1, idx = -1;
+    hand.forEach((t, i) => { const s = t[0] + t[1]; if (s > best) { best = s; idx = i; } });
+    return { best, idx };
+  });
+  const starter = bestSum[0].best >= bestSum[1].best ? 0 : 1;
+  return { starter, openingTileIdx: bestSum[starter].idx };
+}
+
+function makeDominosState() {
+  const all = shuffleArray(makeDominoSet());
+  const hands = [all.slice(0, 7), all.slice(7, 14)];
+  const drawPile = all.slice(14);
+  const { starter, openingTileIdx } = pickDominosOpener(hands);
+  // Pose la tuile d'ouverture sur la chaîne
+  const openingTile = hands[starter][openingTileIdx];
+  const newHands = hands.map((h, i) => i === starter
+    ? h.filter((_, idx) => idx !== openingTileIdx)
+    : h);
+  return {
+    phase: 'playing',          // 'playing' | 'done'
+    hands: newHands,
+    chain: [openingTile.slice()],
+    drawPile,
+    turn: (starter + 1) % 2,   // le suivant joue
+    starter,
+    winner: null,
+    winReason: null,           // 'empty' (main vide) | 'blocked' (blocage) | 'draw'
+    passCount: 0,              // 2 passes consécutives = blocage
+    lastAction: null,          // texte du dernier coup (pour l'historique)
+  };
+}
+
+// Une tuile [a,b] peut-elle être posée à gauche (matching chain.left) ?
+// Renvoie la tuile orientée à poser ou null.
+function canPlaceLeft(tile, leftEnd) {
+  if (tile[0] === leftEnd) return [tile[1], tile[0]];
+  if (tile[1] === leftEnd) return [tile[0], tile[1]];
+  return null;
+}
+function canPlaceRight(tile, rightEnd) {
+  if (tile[0] === rightEnd) return [tile[0], tile[1]];
+  if (tile[1] === rightEnd) return [tile[1], tile[0]];
+  return null;
+}
+function tilePoints(tile) { return tile[0] + tile[1]; }
+function handPoints(hand) { return hand.reduce((s, t) => s + tilePoints(t), 0); }
+
+// Une main a-t-elle au moins une tuile jouable ?
+function hasPlayable(hand, chain) {
+  if (chain.length === 0) return true;
+  const L = chain[0][0], R = chain[chain.length - 1][1];
+  return hand.some((t) => t.includes(L) || t.includes(R));
+}
+
+function DominosOnline({ room, profile, player1, player2, onUpdate, onChangeGame, isSpectator = false }) {
+  const myIndex = isSpectator ? -1 : (room.player1_id === profile.id ? 0 : 1);
+  const isHost = myIndex === 0;
+  const players = [player1, player2];
+
+  // Initialisation : si pas encore d'état, l'hôte génère
+  const state = (room.state && room.state.phase) ? room.state : null;
+
+  // Si pas d'état et je suis l'hôte → je crée
+  useEffect(() => {
+    if (!state && isHost && !isSpectator) {
+      const fresh = makeDominosState();
+      onUpdate({ ...room, state: fresh });
+      updateRoomState(room.id, { state: fresh }).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, isHost]);
+
+  // Écran de règles au démarrage (local à chaque joueur)
+  const [showRules, setShowRules] = useState(true);
+
+  // Popup pour choisir le côté quand une tuile peut aller des 2 côtés
+  const [pendingSide, setPendingSide] = useState(null);  // { tileIdx }
+
+  // Si pas encore d'état partagé → on attend
+  if (!state) {
+    return (
+      <div className="rounded-3xl p-8 text-center"
+           style={{ background: C.cream, boxShadow: '0 6px 0 rgba(0,0,0,0.08)' }}>
+        <div className="text-5xl mb-3">🎴</div>
+        <div style={{ color: C.inkLight, fontWeight: 600 }}>
+          {isHost ? 'Distribution des tuiles...' : `${players[0]?.pseudo || 'L\'hôte'} distribue les tuiles...`}
+        </div>
+      </div>
+    );
+  }
+
+  const { phase, hands, chain, drawPile, turn, winner, winReason, passCount, lastAction } = state;
+  const myHand = myIndex >= 0 ? hands[myIndex] : [];
+  const oppHand = myIndex >= 0 ? hands[1 - myIndex] : [];
+  const isMyTurn = !isSpectator && turn === myIndex && phase === 'playing';
+
+  const leftEnd = chain.length ? chain[0][0] : null;
+  const rightEnd = chain.length ? chain[chain.length - 1][1] : null;
+
+  // Effets de fin de partie + enregistrement
+  useGameEndEffects(winner, winner === myIndex);
+  useRecordResult({ room, isHost, isSpectator, game: 'dominos', winnerIndex: winner });
+
+  // === Poser une tuile ===
+  const placeTile = async (tileIdx, side) => {
+    if (!isMyTurn) return;
+    const tile = myHand[tileIdx];
+    const orientedL = canPlaceLeft(tile, leftEnd);
+    const orientedR = canPlaceRight(tile, rightEnd);
+    let oriented = null;
+    if (side === 'left' && orientedL) oriented = orientedL;
+    else if (side === 'right' && orientedR) oriented = orientedR;
+    else if (!side) {
+      // Auto : si possible des 2 côtés on demande, sinon on choisit l'unique
+      if (orientedL && orientedR) { setPendingSide({ tileIdx }); return; }
+      if (orientedL) oriented = orientedL;
+      else if (orientedR) oriented = orientedR;
+    }
+    if (!oriented) return;  // pas jouable
+
+    const newChain = side === 'left'
+      ? [oriented, ...chain]
+      : [...chain, oriented];
+    const newHand = myHand.filter((_, i) => i !== tileIdx);
+    const newHands = hands.map((h, i) => i === myIndex ? newHand : h);
+
+    playSound('pop'); vibrate(40);
+
+    // Victoire si main vide
+    if (newHand.length === 0) {
+      const newState = {
+        ...state,
+        hands: newHands,
+        chain: newChain,
+        winner: myIndex,
+        winReason: 'empty',
+        phase: 'done',
+        passCount: 0,
+        lastAction: `🏆 ${players[myIndex]?.pseudo || 'Joueur'} vide sa main !`,
+      };
+      onUpdate({ ...room, state: newState });
+      await updateRoomState(room.id, { state: newState });
+      return;
+    }
+
+    const newState = {
+      ...state,
+      hands: newHands,
+      chain: newChain,
+      turn: 1 - myIndex,
+      passCount: 0,
+      lastAction: `${players[myIndex]?.pseudo || 'Joueur'} pose ${tile[0]}|${tile[1]}`,
+    };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
+
+  // === Piocher une tuile ===
+  const draw = async () => {
+    if (!isMyTurn) return;
+    if (drawPile.length === 0) return;
+    const drawn = drawPile[0];
+    const newDraw = drawPile.slice(1);
+    const newHand = [...myHand, drawn];
+    const newHands = hands.map((h, i) => i === myIndex ? newHand : h);
+    playSound('pop'); vibrate(20);
+    const newState = {
+      ...state,
+      hands: newHands,
+      drawPile: newDraw,
+      passCount: 0,   // piocher casse la séquence de passes
+      lastAction: `${players[myIndex]?.pseudo || 'Joueur'} pioche`,
+    };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
+
+  // === Passer son tour (quand pioche vide ET pas jouable) ===
+  const passTurn = async () => {
+    if (!isMyTurn) return;
+    const newPassCount = passCount + 1;
+    if (newPassCount >= 2) {
+      // Blocage : on compare les points
+      const pts = [handPoints(hands[0]), handPoints(hands[1])];
+      let win;
+      if (pts[0] < pts[1]) win = 0;
+      else if (pts[1] < pts[0]) win = 1;
+      else win = 'draw';
+      const newState = {
+        ...state,
+        turn: 1 - myIndex,
+        passCount: newPassCount,
+        phase: 'done',
+        winner: win,
+        winReason: 'blocked',
+        lastAction: '🚫 Plus personne ne peut jouer !',
+      };
+      onUpdate({ ...room, state: newState });
+      await updateRoomState(room.id, { state: newState });
+      return;
+    }
+    const newState = {
+      ...state,
+      turn: 1 - myIndex,
+      passCount: newPassCount,
+      lastAction: `${players[myIndex]?.pseudo || 'Joueur'} passe son tour`,
+    };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+  };
+
+  // === Revanche (hôte) ===
+  const newGame = async () => {
+    if (!isHost) return;
+    const fresh = makeDominosState();
+    onUpdate({ ...room, state: fresh });
+    await updateRoomState(room.id, { state: fresh });
+  };
+
+  const canIPlay = hasPlayable(myHand, chain);
+  const showDraw = isMyTurn && !canIPlay && drawPile.length > 0;
+  const showPass = isMyTurn && !canIPlay && drawPile.length === 0;
+
+  // Rendu d'une tuile : pip dots à l'ancienne, simple et lisible
+  const Pips = ({ n, color = C.ink }) => {
+    // Positions des points pour 0-6
+    const layouts = {
+      0: [], 1: [[1,1]], 2: [[0,0],[2,2]], 3: [[0,0],[1,1],[2,2]],
+      4: [[0,0],[0,2],[2,0],[2,2]], 5: [[0,0],[0,2],[1,1],[2,0],[2,2]],
+      6: [[0,0],[0,2],[1,0],[1,2],[2,0],[2,2]],
+    };
+    const dots = layouts[n] || [];
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)',
+                    gridTemplateRows: 'repeat(3,1fr)', width: 28, height: 28, gap: 1 }}>
+        {[0,1,2].map(r => [0,1,2].map(c => {
+          const filled = dots.some(d => d[0] === r && d[1] === c);
+          return <div key={`${r}-${c}`} style={{
+            background: filled ? color : 'transparent',
+            borderRadius: '50%', width: 6, height: 6, margin: 'auto',
+          }} />;
+        }))}
+      </div>
+    );
+  };
+
+  const TileView = ({ tile, small = false, dim = false, highlight = false, onClick }) => (
+    <div onClick={onClick}
+      className={onClick ? 'clic-press' : ''}
+      style={{
+        display: 'inline-flex', flexDirection: 'row', alignItems: 'center',
+        background: C.white, borderRadius: 8,
+        border: highlight ? `2px solid ${C.accentPink}` : '1px solid rgba(0,0,0,0.15)',
+        boxShadow: '0 2px 0 rgba(0,0,0,0.08)',
+        padding: small ? 2 : 4, gap: 2,
+        opacity: dim ? 0.4 : 1,
+        cursor: onClick ? 'pointer' : 'default',
+        transform: small ? 'scale(0.85)' : 'none',
+        flexShrink: 0,
+      }}>
+      <div style={{ padding: 2 }}><Pips n={tile[0]} /></div>
+      <div style={{ width: 1, height: 26, background: 'rgba(0,0,0,0.2)' }} />
+      <div style={{ padding: 2 }}><Pips n={tile[1]} /></div>
+    </div>
+  );
+
+  return (
+    <div>
+      {/* === Écran de règles au début === */}
+      {showRules && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+             style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="w-full max-w-sm rounded-3xl p-6 clic-pop"
+               style={{ background: C.white, boxShadow: '0 10px 30px rgba(0,0,0,0.25)',
+                        maxHeight: '85vh', overflowY: 'auto' }}>
+            <div className="text-center mb-3">
+              <div className="text-5xl mb-1">🁫🁌</div>
+              <h3 className="text-xl" style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+                Dominos
+              </h3>
+              <p className="text-sm mt-1" style={{ color: C.inkLight, fontWeight: 600 }}>
+                Vide ta main avant l'adversaire !
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 mb-4">
+              {[
+                { e: '🎴', t: 'Tu reçois 7 tuiles, 14 sont dans la pioche.' },
+                { e: '🔢', t: 'À ton tour, pose une tuile qui correspond à un bout de la chaîne.' },
+                { e: '↔️', t: 'Si elle peut aller des 2 côtés, choisis gauche ou droite.' },
+                { e: '🃏', t: 'Si tu ne peux pas jouer, tu dois piocher.' },
+                { e: '⏭️', t: 'Si la pioche est vide et que tu ne peux pas, tu passes ton tour.' },
+                { e: '🏆', t: 'Le 1er à vider sa main gagne ! En cas de blocage, le plus petit total gagne.' },
+              ].map((r, i) => (
+                <div key={i} className="flex items-center gap-2 p-2 rounded-xl" style={{ background: C.cream }}>
+                  <span className="text-xl" style={{ flexShrink: 0 }}>{r.e}</span>
+                  <span className="text-xs" style={{ color: C.ink, fontWeight: 600 }}>{r.t}</span>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => { tap(); setShowRules(false); }}
+              className="w-full py-3 rounded-2xl clic-press"
+              style={{ background: C.accentPink, color: C.white,
+                       fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                       boxShadow: '0 4px 0 rgba(0,0,0,0.10)' }}>
+              C'est parti ! 🚀
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* === Popup choix gauche/droite === */}
+      {pendingSide && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+             style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="w-full max-w-xs rounded-3xl p-5 text-center"
+               style={{ background: C.white, boxShadow: '0 10px 30px rgba(0,0,0,0.25)' }}>
+            <div className="text-sm mb-3" style={{ color: C.ink, fontWeight: 700 }}>
+              Où poser cette tuile ?
+            </div>
+            <div className="flex justify-center mb-4">
+              <TileView tile={myHand[pendingSide.tileIdx]} highlight />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={() => { const idx = pendingSide.tileIdx; setPendingSide(null); placeTile(idx, 'left'); }}
+                className="py-3 rounded-2xl clic-press"
+                style={{ background: C.blue, color: C.ink, fontWeight: 700,
+                         fontFamily: '"Fredoka", sans-serif', boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
+                ⬅️ Gauche
+              </button>
+              <button onClick={() => { const idx = pendingSide.tileIdx; setPendingSide(null); placeTile(idx, 'right'); }}
+                className="py-3 rounded-2xl clic-press"
+                style={{ background: C.peach, color: C.ink, fontWeight: 700,
+                         fontFamily: '"Fredoka", sans-serif', boxShadow: '0 3px 0 rgba(0,0,0,0.08)' }}>
+                Droite ➡️
+              </button>
+            </div>
+            <button onClick={() => setPendingSide(null)}
+              className="mt-3 text-xs" style={{ color: C.inkSoft, fontWeight: 600 }}>
+              Annuler
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Petit bouton règles */}
+      <div className="flex justify-end mb-2">
+        <button onClick={() => { tap(); setShowRules(true); }}
+          className="text-xs px-3 py-1 rounded-full clic-press"
+          style={{ background: C.white, color: C.inkLight, fontWeight: 700,
+                   boxShadow: '0 2px 0 rgba(0,0,0,0.06)' }}>
+          ❓ Règles
+        </button>
+      </div>
+
+      {/* Scoreboard : main + pioche + tour */}
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        <div className="p-2 rounded-2xl text-center" style={{
+          background: turn === 0 && phase === 'playing' ? C.peach : C.cream,
+          outline: turn === 0 && phase === 'playing' ? `2px solid ${C.accentPink}` : 'none',
+          outlineOffset: '2px',
+        }}>
+          <div className="text-xs" style={{ color: C.inkLight, fontWeight: 700 }}>
+            {players[0]?.pseudo || 'Hôte'} {myIndex === 0 && !isSpectator && '(toi)'}
+          </div>
+          <div className="text-lg" style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+            {hands[0].length} 🎴
+          </div>
+        </div>
+        <div className="p-2 rounded-2xl text-center" style={{ background: C.white }}>
+          <div className="text-xs" style={{ color: C.inkLight, fontWeight: 700 }}>Pioche</div>
+          <div className="text-lg" style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+            {drawPile.length} 🃏
+          </div>
+        </div>
+        <div className="p-2 rounded-2xl text-center" style={{
+          background: turn === 1 && phase === 'playing' ? C.lavender : C.cream,
+          outline: turn === 1 && phase === 'playing' ? `2px solid ${C.accentPink}` : 'none',
+          outlineOffset: '2px',
+        }}>
+          <div className="text-xs" style={{ color: C.inkLight, fontWeight: 700 }}>
+            {players[1]?.pseudo || 'Invité'} {myIndex === 1 && !isSpectator && '(toi)'}
+          </div>
+          <div className="text-lg" style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+            {hands[1].length} 🎴
+          </div>
+        </div>
+      </div>
+
+      {/* Bannière d'état */}
+      {phase === 'playing' && (
+        <div className="rounded-2xl p-2 mb-3 text-center text-sm"
+             style={{ background: C.white, color: C.ink, fontWeight: 700,
+                      boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
+          {isSpectator ? `👀 Au tour de ${players[turn]?.pseudo || 'Joueur'}`
+            : isMyTurn
+              ? (canIPlay ? '👆 À toi de jouer ! Tape une tuile.' : (drawPile.length > 0 ? '🃏 Tu dois piocher.' : '⏭️ Tu dois passer.'))
+              : `⏳ ${players[1 - myIndex]?.pseudo || 'L\'autre'} joue...`}
+        </div>
+      )}
+
+      {/* Chaîne de dominos (scroll horizontal) */}
+      <div className="rounded-2xl p-3 mb-3"
+           style={{ background: C.cream, boxShadow: '0 3px 0 rgba(0,0,0,0.06)',
+                    overflowX: 'auto', whiteSpace: 'nowrap' }}>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minHeight: 44 }}>
+          {chain.map((t, i) => (
+            <TileView key={i} tile={t} small />
+          ))}
+        </div>
+      </div>
+
+      {/* Dernier coup */}
+      {lastAction && (
+        <div className="text-xs text-center mb-3"
+             style={{ color: C.inkLight, fontWeight: 600 }}>
+          {lastAction}
+        </div>
+      )}
+
+      {/* === Fin de partie === */}
+      {phase === 'done' && (
+        <div className="rounded-3xl p-5 text-center mb-3" style={{
+          background: winner === 'draw' ? C.lavender
+            : winner === myIndex ? C.mint : C.pink,
+          boxShadow: '0 6px 0 rgba(0,0,0,0.08)',
+        }}>
+          <div className="text-5xl mb-2">
+            <span className="clic-celebrate">{winner === 'draw' ? '🤝' : winner === myIndex ? '🎉' : '😢'}</span>
+          </div>
+          <h3 className="text-xl mb-2"
+              style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+            {winner === 'draw' ? 'Égalité !'
+              : `${players[winner]?.pseudo || 'Joueur'} gagne !`}
+          </h3>
+          <div className="text-xs mb-3" style={{ color: C.inkLight, fontWeight: 600 }}>
+            {winReason === 'empty' && 'Main vidée !'}
+            {winReason === 'blocked' && `Blocage : ${handPoints(hands[0])} vs ${handPoints(hands[1])} points`}
+          </div>
+          {isHost ? (
+            <EndGameActions onRematch={newGame} onChangeGame={onChangeGame}
+              opponentName={players[1]?.pseudo} />
+          ) : (
+            <div className="text-sm" style={{ color: C.inkLight, fontWeight: 600 }}>
+              ⏳ {players[0]?.pseudo || 'L\'hôte'} va relancer...
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* === Ma main (pas spectateur) === */}
+      {phase === 'playing' && !isSpectator && (
+        <>
+          <div className="text-xs mb-1 px-2" style={{ color: C.inkSoft, fontWeight: 700 }}>
+            Ta main ({myHand.length} tuiles)
+          </div>
+          <div className="rounded-2xl p-3 mb-3"
+               style={{ background: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.06)',
+                        overflowX: 'auto', whiteSpace: 'nowrap' }}>
+            <div style={{ display: 'inline-flex', gap: 6, minHeight: 50 }}>
+              {myHand.map((t, i) => {
+                const canL = canPlaceLeft(t, leftEnd);
+                const canR = canPlaceRight(t, rightEnd);
+                const playable = !!(canL || canR);
+                const dim = !isMyTurn || !playable;
+                return (
+                  <TileView key={i} tile={t} dim={dim}
+                    onClick={isMyTurn && playable ? () => placeTile(i) : undefined} />
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Actions : piocher ou passer */}
+          {showDraw && (
+            <button onClick={draw}
+              className="w-full py-3 rounded-2xl clic-press mb-2"
+              style={{ background: C.accentPink, color: C.white,
+                       fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                       boxShadow: '0 4px 0 rgba(0,0,0,0.10)' }}>
+              🃏 Piocher
+            </button>
+          )}
+          {showPass && (
+            <button onClick={passTurn}
+              className="w-full py-3 rounded-2xl clic-press mb-2"
+              style={{ background: C.inkSoft, color: C.white,
+                       fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                       boxShadow: '0 4px 0 rgba(0,0,0,0.10)' }}>
+              ⏭️ Passer mon tour
+            </button>
+          )}
+        </>
+      )}
+
+      {/* Vue spectateur : on n'affiche pas les mains, juste la chaîne et le statut */}
+      {phase === 'playing' && isSpectator && (
+        <div className="text-xs text-center" style={{ color: C.inkSoft, fontWeight: 600 }}>
+          👀 Mode spectateur — les mains sont cachées
+        </div>
+      )}
     </div>
   );
 }
