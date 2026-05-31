@@ -1116,7 +1116,7 @@ const GAMES = {
     ],
   },
   dominos: {
-    title: 'Dominos', cardEmoji: '🁫🁌', headerEmoji: '🁫',
+    title: 'Dominos', cardEmoji: '🎴🀄', headerEmoji: '🎴',
     bg: C.cream, tagline: 'Le jeu classique !',
     objective: 'Pose tes tuiles pour vider ta main avant l\'adversaire.',
     rules: [
@@ -2676,92 +2676,25 @@ function TrophiesScreen({ profile, onBack }) {
   );
 }
 
-// ============================================================
-// INSTALL BANNER — proposer d'installer ClicJeu sur l'écran d'accueil
-// ------------------------------------------------------------
-// Calqué sur GeoDojo : on capte l'événement beforeinstallprompt (émis par
-// Chrome/Android quand l'app est installable) et on affiche un petit
-// bandeau "Installer". AUCUN Service Worker n'est utilisé (c'est lui qui
-// causait le warning Play Protect). L'app reste installable via le manifest.
-//
-// Le bandeau ne s'affiche jamais si :
-//   - l'app est déjà installée (mode standalone)
-//   - le navigateur n'émet pas beforeinstallprompt (iOS Safari, etc.)
-//   - l'utilisateur l'a fermé pour cette session
-// ============================================================
-function InstallBanner() {
-  const [promptEvent, setPromptEvent] = useState(null);
-  const [dismissed, setDismissed] = useState(false);
-
-  useEffect(() => {
-    // Si déjà installée (lancée en standalone), on ne propose rien
-    const isStandalone = window.matchMedia &&
-      window.matchMedia('(display-mode: standalone)').matches;
-    if (isStandalone) return;
-
-    const handler = (e) => {
-      e.preventDefault();        // on garde la main pour déclencher plus tard
-      setPromptEvent(e);
-    };
-    window.addEventListener('beforeinstallprompt', handler);
-    // Quand l'app vient d'être installée, on cache le bandeau
-    const installedHandler = () => setPromptEvent(null);
-    window.addEventListener('appinstalled', installedHandler);
-    return () => {
-      window.removeEventListener('beforeinstallprompt', handler);
-      window.removeEventListener('appinstalled', installedHandler);
-    };
-  }, []);
-
-  if (!promptEvent || dismissed) return null;
-
-  const doInstall = async () => {
-    promptEvent.prompt();
-    try {
-      const choice = await promptEvent.userChoice;
-      if (choice.outcome === 'accepted') setPromptEvent(null);
-    } catch { /* ignore */ }
-  };
-
-  return (
-    <div className="rounded-2xl p-3 mb-3 flex items-center gap-3 clic-fade-in"
-         style={{ background: C.lavender, boxShadow: '0 3px 0 rgba(0,0,0,0.06)' }}>
-      <div className="text-2xl">📲</div>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm" style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
-          Installer ClicJeu
-        </div>
-        <div className="text-xs" style={{ color: C.inkLight, fontWeight: 600 }}>
-          Ajoute l'app à ton écran d'accueil
-        </div>
-      </div>
-      <button onClick={doInstall}
-        className="text-sm px-4 py-2 rounded-full clic-press"
-        style={{ background: C.accentPink, color: C.white, fontWeight: 700,
-                 fontFamily: '"Fredoka", sans-serif', flexShrink: 0,
-                 boxShadow: '0 3px 0 rgba(0,0,0,0.10)' }}>
-        Installer
-      </button>
-      <button onClick={() => setDismissed(true)}
-        aria-label="Fermer"
-        style={{ background: 'none', border: 'none', color: C.inkSoft,
-                 fontSize: 20, lineHeight: 1, cursor: 'pointer', flexShrink: 0, padding: '0 2px' }}>
-        ×
-      </button>
-    </div>
-  );
-}
-
 function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
                       pendingFriendRequests = 0, friends = [],
                       onQuickInvite, onWatchFriend,
                       incomingInvites = [], onAcceptInvite, onIgnoreInvite,
                       toast = null, onOpenTrophies = null }) {
-  // Ordre des cartes : les jeux jouables en solo en premier (priorité de
-  // visibilité), suivis des jeux multi-uniquement. Tant qu'on n'a pas d'IA
-  // pour TTT/C4/Pendu/Échecs, ça permet aux enfants seuls de repérer
-  // immédiatement ce qui est jouable sans ami connecté.
+  // Ordre des cartes : les NOUVEAUX jeux en premier (demande de la session),
+  // pour que les enfants repèrent tout de suite les dernières nouveautés.
+  // Ensuite, les jeux solo, puis le reste. L'ordre dans NEW_GAMES_FIRST
+  // définit la priorité d'affichage des nouveautés (du plus récent au moins).
+  const NEW_GAMES_FIRST = ['dominos', 'motsmeles', 'culture', 'course', 'pfc'];
   const ids = Object.keys(GAMES).sort((a, b) => {
+    const aNew = NEW_GAMES_FIRST.indexOf(a);
+    const bNew = NEW_GAMES_FIRST.indexOf(b);
+    // Les deux sont des nouveautés → on respecte l'ordre de NEW_GAMES_FIRST
+    if (aNew !== -1 && bNew !== -1) return aNew - bNew;
+    // Un seul est une nouveauté → il passe devant
+    if (aNew !== -1) return -1;
+    if (bNew !== -1) return 1;
+    // Aucun n'est une nouveauté → les jeux solo d'abord, puis le reste
     const aSolo = GAMES[a].hasSoloMode ? 0 : 1;
     const bSolo = GAMES[b].hasSoloMode ? 0 : 1;
     return aSolo - bSolo;
@@ -2793,9 +2726,6 @@ function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
       <ProfileBar profile={profile} onLogout={onLogout}
                   onOpenFriends={onOpenFriends} pendingFriends={pendingFriendRequests}
                   onEditAvatar={onEditAvatar} />
-
-      {/* Bandeau d'installation (PWA sans Service Worker) */}
-      <InstallBanner />
 
       {/* Toast (timeout, erreur, etc.) */}
       {toast && (
@@ -7387,6 +7317,14 @@ function DominosOnline({ room, profile, player1, player2, onUpdate, onChangeGame
   // Popup pour choisir le côté quand une tuile peut aller des 2 côtés
   const [pendingSide, setPendingSide] = useState(null);  // { tileIdx }
 
+  // ⚠️ RÈGLE DES HOOKS : tous les hooks doivent être appelés à CHAQUE rendu,
+  // dans le même ordre, AVANT tout return conditionnel. On lit donc le winner
+  // de façon défensive (state peut être null au tout premier rendu) et on
+  // appelle les hooks d'effet ici, avant le "if (!state) return" plus bas.
+  const winnerSafe = state ? state.winner : null;
+  useGameEndEffects(winnerSafe, winnerSafe === myIndex);
+  useRecordResult({ room, isHost, isSpectator, game: 'dominos', winnerIndex: winnerSafe });
+
   // Si pas encore d'état partagé → on attend
   if (!state) {
     return (
@@ -7407,10 +7345,6 @@ function DominosOnline({ room, profile, player1, player2, onUpdate, onChangeGame
 
   const leftEnd = chain.length ? chain[0][0] : null;
   const rightEnd = chain.length ? chain[chain.length - 1][1] : null;
-
-  // Effets de fin de partie + enregistrement
-  useGameEndEffects(winner, winner === myIndex);
-  useRecordResult({ room, isHost, isSpectator, game: 'dominos', winnerIndex: winner });
 
   // === Poser une tuile ===
   const placeTile = async (tileIdx, side) => {
@@ -7585,7 +7519,7 @@ function DominosOnline({ room, profile, player1, player2, onUpdate, onChangeGame
                style={{ background: C.white, boxShadow: '0 10px 30px rgba(0,0,0,0.25)',
                         maxHeight: '85vh', overflowY: 'auto' }}>
             <div className="text-center mb-3">
-              <div className="text-5xl mb-1">🁫🁌</div>
+              <div className="text-5xl mb-1">🎴🀄</div>
               <h3 className="text-xl" style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
                 Dominos
               </h3>
