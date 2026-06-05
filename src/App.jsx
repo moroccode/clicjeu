@@ -2911,7 +2911,9 @@ function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
                 {g.headerEmoji}
               </div>
 
-              {/* Badge "Nouveau" (coin haut gauche) pour les tout nouveaux jeux */}
+              {/* Badge "Nouveau" (coin haut gauche) pour les tout nouveaux jeux.
+                  zIndex élevé pour passer AU-DESSUS des emojis de la carte
+                  (sinon les pièces du jeu le masquaient). */}
               {NEW_BADGE_GAMES.includes(id) && (
                 <div className="absolute top-3 left-3"
                      style={{
@@ -2922,8 +2924,9 @@ function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
                        fontSize: '0.7rem',
                        padding: '4px 10px',
                        borderRadius: 999,
-                       boxShadow: '0 2px 0 rgba(0,0,0,0.10)',
+                       boxShadow: '0 2px 6px rgba(0,0,0,0.25)',
                        letterSpacing: 0.2,
+                       zIndex: 20,
                      }}>
                   ✨ Nouveau
                 </div>
@@ -2947,8 +2950,9 @@ function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
                 {g.hasSoloMode ? '🎯 Aussi solo' : '👥 À 2'}
               </div>
 
-              {/* Contenu de la carte */}
-              <div className="relative">
+              {/* Contenu de la carte. Si badge "Nouveau", on décale le contenu
+                  vers le bas pour ne pas que l'emoji passe sous le badge. */}
+              <div className="relative" style={{ marginTop: NEW_BADGE_GAMES.includes(id) ? 28 : 0 }}>
                 <div className="text-4xl mb-2">{g.cardEmoji}</div>
                 <h3 className="text-2xl mb-1"
                     style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
