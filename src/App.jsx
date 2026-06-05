@@ -1126,6 +1126,17 @@ const GAMES = {
       { icon: '🏆', text: 'Le 1er à vider sa main gagne !' },
     ],
   },
+  dames: {
+    title: 'Dames', cardEmoji: '🔴⚫', headerEmoji: '🔴',
+    bg: C.pink, tagline: 'Capture tous les pions !',
+    objective: 'Capture tous les pions adverses en sautant par-dessus.',
+    rules: [
+      { icon: '↗️', text: 'Les pions avancent en diagonale' },
+      { icon: '🦘', text: 'Saute par-dessus un pion adverse pour le capturer' },
+      { icon: '👑', text: 'Arrive au bout pour devenir une dame (va dans tous les sens)' },
+      { icon: '🏆', text: 'Capture tous les pions adverses pour gagner !' },
+    ],
+  },
 };
 
 // ============================================================
@@ -1149,8 +1160,8 @@ const BADGES = [
     check: (s) => s.totalGames >= 10 },
   { id: 'veteran',     emoji: '🌟', title: 'Vétéran',           desc: 'Joue 50 parties',
     check: (s) => s.totalGames >= 50 },
-  { id: 'all_games',   emoji: '🎯', title: 'Touche-à-tout',     desc: 'Joue aux 11 jeux',
-    check: (s) => s.distinctGames >= 11 },
+  { id: 'all_games',   emoji: '🎯', title: 'Touche-à-tout',     desc: 'Joue aux 12 jeux',
+    check: (s) => s.distinctGames >= 12 },
   { id: 'champion',    emoji: '👑', title: 'Champion',          desc: 'Gagne 25 parties',
     check: (s) => s.totalWins >= 25 },
   { id: 'social',      emoji: '🤝', title: 'Sociable',          desc: 'Joue avec 3 amis différents',
@@ -2685,7 +2696,10 @@ function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
   // pour que les enfants repèrent tout de suite les dernières nouveautés.
   // Ensuite, les jeux solo, puis le reste. L'ordre dans NEW_GAMES_FIRST
   // définit la priorité d'affichage des nouveautés (du plus récent au moins).
-  const NEW_GAMES_FIRST = ['dominos', 'motsmeles', 'culture', 'course', 'pfc'];
+  const NEW_GAMES_FIRST = ['dames', 'dominos', 'motsmeles', 'culture', 'course', 'pfc'];
+  // Jeux qui portent le badge "✨ Nouveau" (les tout derniers ajoutés).
+  // À mettre à jour quand on ajoute/retire des nouveautés.
+  const NEW_BADGE_GAMES = ['dames', 'dominos'];
   const ids = Object.keys(GAMES).sort((a, b) => {
     const aNew = NEW_GAMES_FIRST.indexOf(a);
     const bNew = NEW_GAMES_FIRST.indexOf(b);
@@ -2896,6 +2910,24 @@ function GamesGrid({ profile, onLogout, onPickGame, onOpenFriends, onEditAvatar,
                    style={{ fontSize: '7rem', lineHeight: 1 }}>
                 {g.headerEmoji}
               </div>
+
+              {/* Badge "Nouveau" (coin haut gauche) pour les tout nouveaux jeux */}
+              {NEW_BADGE_GAMES.includes(id) && (
+                <div className="absolute top-3 left-3"
+                     style={{
+                       background: C.accentPink,
+                       color: C.white,
+                       fontFamily: '"Fredoka", sans-serif',
+                       fontWeight: 700,
+                       fontSize: '0.7rem',
+                       padding: '4px 10px',
+                       borderRadius: 999,
+                       boxShadow: '0 2px 0 rgba(0,0,0,0.10)',
+                       letterSpacing: 0.2,
+                     }}>
+                  ✨ Nouveau
+                </div>
+              )}
 
               {/* Badge mode (coin haut droit) : solo-capable ou multi-only.
                   Aide les enfants/parents à voir d'un coup d'œil ce qui
@@ -3766,6 +3798,7 @@ function Lobby({ profile, room, onLeave, onCancel, onFinished, onRoomUpdate, onC
             case 'culture':  return <CultureGOnline  {...gameProps} />;
             case 'motsmeles': return <MotsMelesOnline {...gameProps} />;
             case 'dominos':  return <DominosOnline   {...gameProps} />;
+            case 'dames':    return <DamesOnline     {...gameProps} />;
             default:
               return (
                 <div className="rounded-2xl p-4 text-center" style={{
@@ -7291,6 +7324,461 @@ function hasPlayable(hand, chain) {
   if (chain.length === 0) return true;
   const L = chain[0][0], R = chain[chain.length - 1][1];
   return hand.some((t) => t.includes(L) || t.includes(R));
+}
+
+// ============================================================
+// JEU — DAMES — VERSION ONLINE (variante classique 8×8)
+// ------------------------------------------------------------
+// Règles : 12 pions chacun sur les cases foncées. Pions en diagonale vers
+// l'avant d'une case. Capture par saut par-dessus un pion adverse (case
+// derrière libre). Captures multiples en chaîne autorisées. Prise
+// OBLIGATOIRE. Un pion qui atteint la dernière rangée devient une dame
+// (👑) qui se déplace/capture dans les 4 diagonales (1 case).
+// Victoire : l'adversaire n'a plus de pion OU ne peut plus jouer.
+//
+// Repères : board[row][col]. J1 = rouge (0), démarre en bas (rangées 5-7),
+// avance vers le haut (row décroît). J2 = noir (1), démarre en haut
+// (rangées 0-2), avance vers le bas (row croît).
+// Valeurs : null | 'r' | 'b' | 'R' (dame rouge) | 'B' (dame noire).
+// ============================================================
+const DAMES_N = 8;
+
+function makeDamesBoard() {
+  const b = Array.from({ length: DAMES_N }, () => Array(DAMES_N).fill(null));
+  for (let r = 0; r < DAMES_N; r++) {
+    for (let c = 0; c < DAMES_N; c++) {
+      const dark = (r + c) % 2 === 1;  // pions sur cases foncées
+      if (!dark) continue;
+      if (r <= 2) b[r][c] = 'b';        // noirs en haut
+      else if (r >= 5) b[r][c] = 'r';   // rouges en bas
+    }
+  }
+  return b;
+}
+
+const damesIsRed   = (p) => p === 'r' || p === 'R';
+const damesIsBlack = (p) => p === 'b' || p === 'B';
+const damesIsKing  = (p) => p === 'R' || p === 'B';
+const damesOwner   = (p) => p == null ? -1 : (damesIsRed(p) ? 0 : 1);
+const damesInBounds = (r, c) => r >= 0 && r < DAMES_N && c >= 0 && c < DAMES_N;
+
+// Directions diagonales selon la pièce.
+// Pion rouge monte (row-1), pion noir descend (row+1), dame = 4 directions.
+function damesDirections(piece) {
+  if (piece === 'r') return [[-1, -1], [-1, 1]];
+  if (piece === 'b') return [[1, -1], [1, 1]];
+  return [[-1, -1], [-1, 1], [1, -1], [1, 1]];  // dames
+}
+
+// Captures possibles depuis (r,c) pour la pièce présente. Renvoie une liste
+// de { to:[r,c], captured:[r,c] }.
+function damesCapturesFrom(board, r, c) {
+  const piece = board[r][c];
+  if (!piece) return [];
+  const dirs = damesDirections(piece);
+  const out = [];
+  for (const [dr, dc] of dirs) {
+    const mr = r + dr, mc = c + dc;       // case du pion sauté
+    const tr = r + 2 * dr, tc = c + 2 * dc; // case d'arrivée
+    if (!damesInBounds(tr, tc)) continue;
+    const mid = damesInBounds(mr, mc) ? board[mr][mc] : null;
+    if (!mid) continue;
+    if (damesOwner(mid) === damesOwner(piece)) continue;  // pas un adverse
+    if (board[tr][tc] != null) continue;                   // arrivée occupée
+    out.push({ to: [tr, tc], captured: [mr, mc] });
+  }
+  return out;
+}
+
+// Déplacements simples (sans capture) depuis (r,c).
+function damesSimpleMoves(board, r, c) {
+  const piece = board[r][c];
+  if (!piece) return [];
+  const dirs = damesDirections(piece);
+  const out = [];
+  for (const [dr, dc] of dirs) {
+    const tr = r + dr, tc = c + dc;
+    if (!damesInBounds(tr, tc)) continue;
+    if (board[tr][tc] != null) continue;
+    out.push({ to: [tr, tc] });
+  }
+  return out;
+}
+
+// Promotion : un pion qui atteint la dernière rangée devient dame.
+function damesPromote(piece, r) {
+  if (piece === 'r' && r === 0) return 'R';
+  if (piece === 'b' && r === DAMES_N - 1) return 'B';
+  return piece;
+}
+
+// Toutes les cases du joueur `player` (0=rouge,1=noir) qui PEUVENT capturer.
+function damesPiecesWithCapture(board, player) {
+  const res = [];
+  for (let r = 0; r < DAMES_N; r++)
+    for (let c = 0; c < DAMES_N; c++) {
+      const p = board[r][c];
+      if (p && damesOwner(p) === player && damesCapturesFrom(board, r, c).length)
+        res.push([r, c]);
+    }
+  return res;
+}
+
+// Le joueur a-t-il au moins un coup légal ?
+function damesHasAnyMove(board, player) {
+  for (let r = 0; r < DAMES_N; r++)
+    for (let c = 0; c < DAMES_N; c++) {
+      const p = board[r][c];
+      if (!p || damesOwner(p) !== player) continue;
+      if (damesCapturesFrom(board, r, c).length) return true;
+      if (damesSimpleMoves(board, r, c).length) return true;
+    }
+  return false;
+}
+
+function damesCountPieces(board, player) {
+  let n = 0;
+  for (let r = 0; r < DAMES_N; r++)
+    for (let c = 0; c < DAMES_N; c++)
+      if (board[r][c] && damesOwner(board[r][c]) === player) n++;
+  return n;
+}
+
+function makeDamesState() {
+  return {
+    board: makeDamesBoard(),
+    turn: 0,                 // 0 = rouge (J1) commence
+    winner: null,            // 0 | 1
+    mustContinueFrom: null,  // [r,c] si une chaîne de capture est en cours
+    lastMove: null,
+  };
+}
+
+function DamesOnline({ room, profile, player1, player2, onUpdate, onChangeGame, isSpectator = false }) {
+  const myIndex = isSpectator ? -1 : (room.player1_id === profile.id ? 0 : 1);
+  const players = [player1, player2];
+
+  const state = (room.state && room.state.board) ? room.state : makeDamesState();
+  const { board, turn, winner, mustContinueFrom, lastMove } = state;
+
+  const [selected, setSelected] = useState(null);  // [r,c] de la pièce choisie
+  const [showRules, setShowRules] = useState(true); // écran de règles au début
+
+  const isMyTurn = !isSpectator && turn === myIndex && winner == null;
+
+  useGameEndEffects(winner, winner === myIndex);
+  useRecordResult({ room, isHost: myIndex === 0, isSpectator, game: 'dames', winnerIndex: winner });
+
+  // Captures obligatoires : la liste des pièces du joueur courant qui peuvent
+  // capturer. Si non vide, seules ces pièces sont jouables.
+  const forcedCapturePieces = useMemo(
+    () => winner == null ? damesPiecesWithCapture(board, turn) : [],
+    [board, turn, winner]
+  );
+
+  // Coups autorisés pour la pièce sélectionnée
+  const movesForSelected = useMemo(() => {
+    if (!selected) return [];
+    const [r, c] = selected;
+    const caps = damesCapturesFrom(board, r, c);
+    // Si une chaîne est en cours, on ne peut continuer qu'avec cette pièce et
+    // uniquement des captures
+    if (mustContinueFrom) {
+      if (mustContinueFrom[0] !== r || mustContinueFrom[1] !== c) return [];
+      return caps.map((m) => ({ ...m, isCapture: true }));
+    }
+    // Si des captures sont obligatoires, on n'autorise que les captures
+    if (forcedCapturePieces.length) {
+      const canThisCapture = forcedCapturePieces.some(([fr, fc]) => fr === r && fc === c);
+      if (!canThisCapture) return [];
+      return caps.map((m) => ({ ...m, isCapture: true }));
+    }
+    // Sinon, déplacements simples
+    return damesSimpleMoves(board, r, c).map((m) => ({ ...m, isCapture: false }));
+  }, [selected, board, mustContinueFrom, forcedCapturePieces]);
+
+  // === Jouer un coup ===
+  const playMove = async (move) => {
+    if (!isMyTurn || !selected) return;
+    const [r, c] = selected;
+    const [tr, tc] = move.to;
+    const newBoard = board.map((row) => [...row]);
+    let piece = newBoard[r][c];
+    newBoard[r][c] = null;
+
+    if (move.isCapture) {
+      const [mr, mc] = move.captured;
+      newBoard[mr][mc] = null;
+    }
+
+    // Promotion ?
+    const before = piece;
+    piece = damesPromote(piece, tr);
+    const justPromoted = before !== piece;
+    newBoard[tr][tc] = piece;
+
+    playSound('pop'); vibrate(40);
+
+    // Chaîne de capture : si on vient de capturer, qu'on n'a pas promu à
+    // l'instant, et qu'il reste des captures depuis la nouvelle case → on
+    // continue avec la même pièce (même joueur).
+    let continueChain = false;
+    if (move.isCapture && !justPromoted) {
+      const moreCaps = damesCapturesFrom(newBoard, tr, tc);
+      if (moreCaps.length) continueChain = true;
+    }
+
+    // Conditions de victoire
+    const opp = 1 - myIndex;
+    const oppPieces = damesCountPieces(newBoard, opp);
+    let newWinner = null;
+    if (oppPieces === 0) newWinner = myIndex;
+
+    let newTurn = turn;
+    let newMustContinue = null;
+    if (continueChain) {
+      newMustContinue = [tr, tc];   // même joueur rejoue, même pièce
+    } else {
+      newTurn = 1 - turn;
+      // Si l'adversaire ne peut plus bouger → victoire du joueur courant
+      if (newWinner == null && !damesHasAnyMove(newBoard, newTurn)) {
+        newWinner = myIndex;
+      }
+    }
+
+    const newState = {
+      board: newBoard,
+      turn: newTurn,
+      winner: newWinner,
+      mustContinueFrom: newMustContinue,
+      lastMove: { from: [r, c], to: [tr, tc] },
+    };
+    onUpdate({ ...room, state: newState });
+    await updateRoomState(room.id, { state: newState });
+
+    // Si la chaîne continue, on garde la pièce sélectionnée
+    setSelected(continueChain ? [tr, tc] : null);
+  };
+
+  // === Toucher une case ===
+  const tapSquare = (r, c) => {
+    if (!isMyTurn) return;
+    const piece = board[r][c];
+
+    // Si une chaîne est en cours, on est verrouillé sur cette pièce
+    if (mustContinueFrom) {
+      const [mr, mc] = mustContinueFrom;
+      if (selected && (r !== mr || c !== mc)) {
+        // tap sur une case d'arrivée ?
+        const mv = movesForSelected.find((m) => m.to[0] === r && m.to[1] === c);
+        if (mv) { playMove(mv); return; }
+      }
+      setSelected([mr, mc]);
+      return;
+    }
+
+    // Si on a déjà une pièce sélectionnée et qu'on tape une case d'arrivée
+    if (selected) {
+      const mv = movesForSelected.find((m) => m.to[0] === r && m.to[1] === c);
+      if (mv) { playMove(mv); return; }
+    }
+
+    // Sinon, on sélectionne une de ses pièces
+    if (piece && damesOwner(piece) === myIndex) {
+      // Si captures obligatoires, on ne peut sélectionner qu'une pièce qui capture
+      if (forcedCapturePieces.length &&
+          !forcedCapturePieces.some(([fr, fc]) => fr === r && fc === c)) {
+        // feedback : pièce non autorisée (capture obligatoire ailleurs)
+        playSound('pop');
+        return;
+      }
+      setSelected([r, c]);
+      tap();
+    }
+  };
+
+  // === Revanche (hôte) ===
+  const newGame = async () => {
+    if (myIndex !== 0) return;
+    const fresh = makeDamesState();
+    onUpdate({ ...room, state: fresh });
+    await updateRoomState(room.id, { state: fresh });
+  };
+
+  // Bannière
+  let banner;
+  if (winner != null) {
+    banner = `🏆 ${players[winner]?.pseudo || 'Joueur'} gagne !`;
+  } else if (isSpectator) {
+    banner = `👀 Au tour de ${players[turn]?.pseudo || 'Joueur'} (${turn === 0 ? '🔴' : '⚫'})`;
+  } else if (mustContinueFrom && isMyTurn) {
+    banner = '🦘 Continue la chaîne de captures !';
+  } else if (isMyTurn) {
+    banner = forcedCapturePieces.length
+      ? '⚠️ Tu dois capturer !'
+      : '👆 À toi de jouer';
+  } else {
+    banner = `⏳ ${players[1 - myIndex]?.pseudo || 'L\'autre'} joue...`;
+  }
+
+  const isSel = (r, c) => selected && selected[0] === r && selected[1] === c;
+  const isTarget = (r, c) => movesForSelected.some((m) => m.to[0] === r && m.to[1] === c);
+  const isLastMove = (r, c) => lastMove &&
+    ((lastMove.from[0] === r && lastMove.from[1] === c) ||
+     (lastMove.to[0] === r && lastMove.to[1] === c));
+
+  const pieceGlyph = (p) => {
+    if (p === 'r') return '🔴';
+    if (p === 'b') return '⚫';
+    if (p === 'R') return '🔴';  // dame rouge (couronne ajoutée par-dessus)
+    if (p === 'B') return '⚫';  // dame noire
+    return '';
+  };
+
+  return (
+    <div>
+      {/* === Écran de règles au démarrage === */}
+      {showRules && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+             style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="w-full max-w-sm rounded-3xl p-6 clic-pop"
+               style={{ background: C.white, boxShadow: '0 10px 30px rgba(0,0,0,0.25)',
+                        maxHeight: '85vh', overflowY: 'auto' }}>
+            <div className="text-center mb-3">
+              <div className="text-5xl mb-1">🔴⚫</div>
+              <h3 className="text-xl" style={{ fontFamily: '"Fredoka", sans-serif', fontWeight: 700, color: C.ink }}>
+                Dames
+              </h3>
+              <p className="text-sm mt-1" style={{ color: C.inkLight, fontWeight: 600 }}>
+                Capture tous les pions de l'adversaire !
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 mb-4">
+              {[
+                { e: '👆', t: 'Touche un de tes pions, puis touche une case verte pour le déplacer.' },
+                { e: '↗️', t: 'Les pions avancent d\'une case en diagonale, vers l\'avant.' },
+                { e: '🦘', t: 'Saute par-dessus un pion adverse pour le capturer.' },
+                { e: '⛓️', t: 'Tu peux enchaîner plusieurs captures d\'un coup !' },
+                { e: '⚠️', t: 'Si tu peux capturer, tu DOIS le faire.' },
+                { e: '👑', t: 'Un pion qui atteint le bout devient une dame (va dans tous les sens).' },
+                { e: '🏆', t: 'Capture tous les pions adverses pour gagner !' },
+              ].map((r, i) => (
+                <div key={i} className="flex items-center gap-2 p-2 rounded-xl" style={{ background: C.cream }}>
+                  <span className="text-xl" style={{ flexShrink: 0 }}>{r.e}</span>
+                  <span className="text-xs" style={{ color: C.ink, fontWeight: 600 }}>{r.t}</span>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => { tap(); setShowRules(false); }}
+              className="w-full py-3 rounded-2xl clic-press"
+              style={{ background: C.accentPink, color: C.white,
+                       fontFamily: '"Fredoka", sans-serif', fontWeight: 700,
+                       boxShadow: '0 4px 0 rgba(0,0,0,0.10)' }}>
+              C'est parti ! 🚀
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Petit bouton règles */}
+      <div className="flex justify-end mb-2">
+        <button onClick={() => { tap(); setShowRules(true); }}
+          className="text-xs px-3 py-1 rounded-full clic-press"
+          style={{ background: C.white, color: C.inkLight, fontWeight: 700,
+                   boxShadow: '0 2px 0 rgba(0,0,0,0.06)' }}>
+          ❓ Règles
+        </button>
+      </div>
+
+      {/* Scoreboard */}
+      <div className="grid grid-cols-2 gap-3 mb-3">
+        {[0, 1].map((i) => {
+          const isActive = turn === i && winner == null;
+          const isMe = i === myIndex;
+          const count = damesCountPieces(board, i);
+          return (
+            <div key={i} className="p-2 rounded-2xl text-center transition-all"
+              style={{
+                background: i === 0 ? C.pink : C.lavender,
+                outline: isActive ? `3px solid ${C.accentPink}` : 'none',
+                outlineOffset: '2px',
+                boxShadow: '0 4px 0 rgba(0,0,0,0.06)',
+              }}>
+              <div className="text-xs" style={{ color: C.inkLight, fontWeight: 700 }}>
+                {i === 0 ? '🔴 Rouge' : '⚫ Noir'}
+              </div>
+              <div className="text-sm" style={{ color: C.ink, fontWeight: 700, fontFamily: '"Fredoka", sans-serif' }}>
+                {players[i]?.pseudo || '...'} {isMe && !isSpectator && '(toi)'}
+              </div>
+              <div className="text-xs" style={{ color: C.inkSoft, fontWeight: 600 }}>
+                {count} pions
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <Banner text={banner}
+        color={winner != null ? '#6BCB77' : (forcedCapturePieces.length && isMyTurn ? '#FF8FB1' : C.accentPink)}
+        thinking={!isMyTurn && winner == null && !isSpectator} />
+
+      {/* Le damier */}
+      <div className="rounded-2xl overflow-hidden mb-3"
+           style={{ boxShadow: '0 4px 0 rgba(0,0,0,0.08)', background: C.white, padding: 4 }}>
+        {board.map((row, r) => (
+          <div key={r} className="grid" style={{ gridTemplateColumns: `repeat(${DAMES_N}, 1fr)` }}>
+            {row.map((piece, c) => {
+              const dark = (r + c) % 2 === 1;
+              const sel = isSel(r, c);
+              const target = isTarget(r, c);
+              const last = isLastMove(r, c);
+              return (
+                <div key={c} onClick={() => tapSquare(r, c)}
+                  className="relative flex items-center justify-center"
+                  style={{
+                    aspectRatio: '1 / 1',
+                    background: sel ? '#FFE08A'
+                      : last ? '#FFF0C4'
+                      : dark ? '#C9A07A' : '#F2E2CE',
+                    cursor: isMyTurn ? 'pointer' : 'default',
+                  }}>
+                  {/* Indicateur de case d'arrivée possible */}
+                  {target && (
+                    <div className="absolute rounded-full" style={{
+                      width: '32%', height: '32%',
+                      background: 'rgba(107,203,119,0.7)',
+                    }} />
+                  )}
+                  {piece && (
+                    <span style={{ fontSize: '1.5rem', lineHeight: 1, position: 'relative' }}>
+                      {pieceGlyph(piece)}
+                      {damesIsKing(piece) && (
+                        <span style={{ position: 'absolute', top: '-6px', right: '-6px',
+                                       fontSize: '0.85rem' }}>👑</span>
+                      )}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+
+      {/* Fin de partie */}
+      {winner != null && (
+        myIndex === 0 ? (
+          <EndGameActions onRematch={newGame} onChangeGame={onChangeGame}
+            opponentName={players[1]?.pseudo} />
+        ) : (
+          <div className="rounded-2xl p-3 text-center text-sm"
+               style={{ background: 'rgba(255,255,255,0.6)', color: C.inkLight, fontWeight: 600 }}>
+            ⏳ {players[0]?.pseudo || 'L\'hôte'} va relancer une partie...
+          </div>
+        )
+      )}
+    </div>
+  );
 }
 
 function DominosOnline({ room, profile, player1, player2, onUpdate, onChangeGame, isSpectator = false }) {
